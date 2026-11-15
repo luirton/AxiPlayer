@@ -65,14 +65,21 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
 * Troca rápida de canal via D-pad (Cima / Baixo) durante a reprodução.
 
 ### 4.4 Módulo Filmes & Séries (VOD)
-* Integração com a API do **TMDB**:
-  * Pôsteres originais, sinopse em português, gênero, ano de lançamento e nota.
-  * Elenco principal e direção.
-  * Trailer oficial do YouTube embutido.
+* **Navegação Moderna por Abas Horizontais (Fiel à Imagem de Referência):**
+  * Barra de abas horizontais no topo com scroll fluido: `[ Para você ]`, `[ Lançamentos ]`, `[ Séries Pedidos ]`, `[ Ação ]`, etc.
+  * Aba ativa destacada com texto em branco `#FFFFFF` e sublinhado âmbar/ouro `#FFA000`.
+* **Card Hero Imersivo de Destaque:**
+  * Pôster em alta definição vertical ocupando 100% da largura.
+  * Gradiente OLED escuro com título em destaque.
+  * Metadados em tempo real: Nota (ex: `⭐ 8.0`), Ano de lançamento e Gêneros.
+  * Botão de ação em pílula gradiente Sunset/Fire `[ ▶ Assistir agora ]`.
+  * Sinopse / plot descritivo elegante.
+* **Carrosséis Horizontais de Conteúdo:**
+  * Cabeçalho de categoria com badge de contagem (ex: `84`) e ação rápida `Ver todos >`.
+  * Carrossel de pôsteres cinematográficos em proporção 2:3 com nota e título.
+  * Grade complementar para exploração rápida de mais títulos.
 * Para Séries:
-  * Navegação entre Temporadas (Temporada 1, 2, etc.).
-  * Lista de episódios com miniatura, título e duração.
-  * Marcação automática de episódios já assistidos.
+  * Modal avançado de Temporadas (Temporada 1, 2, etc.) e Episódios com duração e reprodução direta.
 
 ### 4.5 Player Avançado (Fiel ao Modelo IBO Smarters)
 * **Controles completíssimos:**

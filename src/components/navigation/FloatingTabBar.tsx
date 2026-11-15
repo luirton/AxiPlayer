@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { uiState } from '../../services/uiState';
 
 export const FloatingTabBar = (props: any) => {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const state = props?.state;
   const [isFullscreen, setIsFullscreen] = useState(uiState.getFullscreen());
 
@@ -20,8 +22,11 @@ export const FloatingTabBar = (props: any) => {
     return null;
   }
 
+  // Eleva o menu flutuante para garantir que não colida com os botões ou barra de gestos do Android
+  const bottomOffset = Math.max(insets.bottom + 16, 42);
+
   return (
-    <View style={styles.wrapper} pointerEvents="box-none">
+    <View style={[styles.wrapper, { bottom: bottomOffset }]} pointerEvents="box-none">
       <View style={styles.pillContainer}>
         {state.routes.map((route: any, index: number) => {
           const isFocused = state.index === index;

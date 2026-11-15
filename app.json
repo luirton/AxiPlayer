@@ -8,7 +8,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "androidNavigationBar": {
-      "visible": "always",
+      "visible": "immersive",
       "barStyle": "light-content",
       "backgroundColor": "#000000"
     },

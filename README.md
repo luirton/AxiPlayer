@@ -44,10 +44,16 @@ Compatível com telas sensíveis ao toque (celulares e tablets) e controles remo
 - **Modo Imersivo**: Ocultamento automático da barra de navegação do Android durante a reprodução.
 
 ### 🎬 Filmes (VOD) e Séries
+- **Navegação Moderna por Abas Horizontais**: Abas de categorias no topo com scroll suave (`Para você`, `Lançamentos`, `Ação`, etc.) com indicador ativo em âmbar/ouro.
+- **Card Hero Imersivo de Destaque**: Pôster vertical em alta definição com gradiente cinematográfico OLED, nota, ano de lançamento, sinopse e botão de reprodução direta `[ ▶ Assistir agora ]`.
+- **Carrosséis Horizontais de Conteúdo**: Seções organizadas por categoria com badge contador e botão `Ver todos >`, exibindo pôsteres em proporção 2:3 com nota e título.
 - **Destaque de Plataformas de Streaming**: Acesso rápido aos catálogos de **Netflix**, **Prime Video**, **Disney+**, **Max**, **Globoplay**, **Apple TV+** e **Paramount+**.
-- **Abertura em Largura Total**: Ao selecionar uma plataforma, a barra lateral de categorias é automaticamente ocultada, dando 100% de destaque aos pôsteres e informações do catálogo.
 - **Filtros e Busca Dedicada**: Campo de pesquisa espaçoso em largura total com limpeza em um clique e banner informativo de filtros ativos.
 - **Detalhes de Séries**: Navegação fluida por temporadas e episódios com sinopse, duração e capas em alta definição.
+
+### 🧭 Navegação Imersiva e FloatingTabBar
+- **Menu em Pílula Flutuante Elevado**: Barra de navegação suspensa com margem inferior segura, garantindo que nunca fique coberta pelos gestos ou botões do sistema.
+- **Modo Imersivo Android**: Ocultamento automático da barra de navegação virtual do sistema operacional (`immersive mode`), aproveitando 100% da área da tela OLED.
 
 ### 🔗 Suporte Universal a Listas e Links
 Aceita autenticação direta ou importação colando a URL da lista:

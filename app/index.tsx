@@ -15,10 +15,9 @@ export default function SplashScreen() {
 
     async function initApp() {
       try {
-        if (isMounted) setStatusText('Verificando permissões...');
-        
-        // Solicita nativamente as permissões de armazenamento e verifica conectividade de rede
-        await requestInitialPermissions();
+        // [Expo Go Dev] Comentado para não travar no Expo Go durante testes:
+        // if (isMounted) setStatusText('Verificando permissões...');
+        // await requestInitialPermissions();
 
         if (isMounted) setStatusText('Carregando conta...');
         const active = await storage.getActiveAccount();

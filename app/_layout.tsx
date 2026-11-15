@@ -10,6 +10,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (Platform.OS === 'android') {
       try {
+        NavigationBar.setVisibilityAsync('hidden');
         NavigationBar.setStyle('light');
       } catch (e) {}
     }
