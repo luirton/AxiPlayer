@@ -11,12 +11,12 @@ import {
   Modal,
   RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme/colors';
-import { storage } from '../../src/services/storage';
+import { storage, WatchProgressItem, MediaListItem } from '../../src/services/storage';
 import { XtreamClient } from '../../src/services/xtreamClient';
 import { SavedAccount, LiveChannel, VodMovie } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
@@ -27,9 +27,12 @@ const { width } = Dimensions.get('window');
 export default function HomeScreen() {
   const router = useRouter();
   const [account, setAccount] = useState<SavedAccount | null>(null);
-  const [activeFilter, setActiveFilter] = useState<'tudo' | 'series' | 'filmes' | 'categorias'>('tudo');
+  const [activeFilter, setActiveFilter] = useState<'tudo' | 'series' | 'filmes' | 'aovivo'>('tudo');
   const [heroItem, setHeroItem] = useState<VodMovie | null>(null);
   const [todayChannels, setTodayChannels] = useState<LiveChannel[]>([]);
+  const [favoriteChannels, setFavoriteChannels] = useState<LiveChannel[]>([]);
+  const [continueWatching, setContinueWatching] = useState<WatchProgressItem[]>([]);
+  const [watchLaterList, setWatchLaterList] = useState<MediaListItem[]>([]);
   const [recentMovies, setRecentMovies] = useState<VodMovie[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -42,6 +45,26 @@ export default function HomeScreen() {
   useEffect(() => {
     loadHomeData();
   }, []);
+
+  // Recarrega favoritos e histórico sempre que a tela ganha foco
+  useFocusEffect(
+    useCallback(() => {
+      loadFavoritesAndProgress();
+    }, [])
+  );
+
+  const loadFavoritesAndProgress = async () => {
+    try {
+      const favChs = await storage.getFavoriteChannels();
+      setFavoriteChannels(favChs);
+      const progress = await storage.getAllWatchProgress();
+      setContinueWatching(progress);
+      const wl = await storage.getWatchLater();
+      setWatchLaterList(wl);
+    } catch (e) {
+      console.warn('Erro ao carregar favoritos e histórico:', e);
+    }
+  };
 
   const loadHomeData = async (isRefresh: boolean = false) => {
     if (isRefresh) {
@@ -142,7 +165,7 @@ export default function HomeScreen() {
 
         <FocusableItem
           style={styles.searchIconButton}
-          onPress={() => router.push('/(tabs)/live')}
+          onPress={() => router.push('/search')}
         >
           <Ionicons name="search" size={22} color="#fff" />
         </FocusableItem>
@@ -151,6 +174,7 @@ export default function HomeScreen() {
       {/* Filter Chips Bar */}
       <View style={styles.filterBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+          {/* 1. Tudo */}
           <Pressable
             style={[styles.filterChip, activeFilter === 'tudo' && styles.filterChipActive]}
             onPress={() => setActiveFilter('tudo')}
@@ -160,6 +184,20 @@ export default function HomeScreen() {
             </Text>
           </Pressable>
 
+          {/* 2. Ao vivo (Logo após Tudo) */}
+          <Pressable
+            style={[styles.filterChip, activeFilter === 'aovivo' && styles.filterChipActive]}
+            onPress={() => {
+              setActiveFilter('aovivo');
+              router.push('/(tabs)/live');
+            }}
+          >
+            <Text style={[styles.filterText, activeFilter === 'aovivo' && styles.filterTextActive]}>
+              Ao vivo
+            </Text>
+          </Pressable>
+
+          {/* 3. Séries */}
           <Pressable
             style={[styles.filterChip, activeFilter === 'series' && styles.filterChipActive]}
             onPress={() => {
@@ -172,6 +210,7 @@ export default function HomeScreen() {
             </Text>
           </Pressable>
 
+          {/* 4. Filmes */}
           <Pressable
             style={[styles.filterChip, activeFilter === 'filmes' && styles.filterChipActive]}
             onPress={() => {
@@ -181,18 +220,6 @@ export default function HomeScreen() {
           >
             <Text style={[styles.filterText, activeFilter === 'filmes' && styles.filterTextActive]}>
               Filmes
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[styles.filterChip, activeFilter === 'categorias' && styles.filterChipActive]}
-            onPress={() => {
-              setActiveFilter('categorias');
-              router.push('/(tabs)/live');
-            }}
-          >
-            <Text style={[styles.filterText, activeFilter === 'categorias' && styles.filterTextActive]}>
-              Categorias
             </Text>
           </Pressable>
         </ScrollView>
@@ -317,10 +344,188 @@ export default function HomeScreen() {
           {/* Streaming Brands Row (Netflix, Prime Video, Disney+, Max, etc.) */}
           <StreamingBrandsRow onSelectBrand={handleSelectBrand} />
 
-          {/* Section: Jogos de Hoje / Canais em Destaque */}
-          {todayChannels.length > 0 ? (
+          {/* Section: Continuar Assistindo (Se houver progresso salvo) */}
+          {continueWatching.length > 0 ? (
             <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Jogos de Hoje & Canais Ao Vivo</Text>
+              <View style={styles.sectionTitleRow}>
+                <Ionicons name="time-outline" size={18} color={colors.primary} />
+                <Text style={styles.sectionTitleWithIcon}>Continuar Assistindo</Text>
+              </View>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={continueWatching}
+                keyExtractor={(item) => String(item.id)}
+                contentContainerStyle={styles.horizontalList}
+                renderItem={({ item }) => {
+                  const progressPct =
+                    item.durationSec > 0
+                      ? Math.min(Math.max((item.positionSec / item.durationSec) * 100, 5), 100)
+                      : 20;
+
+                  return (
+                    <FocusableItem
+                      style={styles.continueCardItem}
+                      onPress={() => {
+                        if (item.type === 'movie') {
+                          router.push({
+                            pathname: '/(tabs)/movies',
+                            params: { movieId: String(item.id) },
+                          });
+                        } else if (item.type === 'series') {
+                          router.push({
+                            pathname: '/(tabs)/series',
+                            params: { seriesId: String(item.id) },
+                          });
+                        } else {
+                          router.push({
+                            pathname: '/(tabs)/live',
+                            params: { channelId: item.id, autoFullscreen: '1' },
+                          });
+                        }
+                      }}
+                    >
+                      <View style={styles.continuePosterBox}>
+                        {item.poster ? (
+                          <Image
+                            source={{ uri: item.poster }}
+                            style={styles.continuePoster}
+                            contentFit="cover"
+                          />
+                        ) : (
+                          <View style={styles.continuePosterFallback}>
+                            <Ionicons name="play-circle-outline" size={36} color={colors.primary} />
+                          </View>
+                        )}
+                        <View style={styles.playFloatingIcon}>
+                          <Ionicons name="play" size={14} color="#000" />
+                        </View>
+                        {/* Barra de Progresso Visual na base do card */}
+                        <View style={styles.progressBarTrack}>
+                          <View style={[styles.progressBarFill, { width: `${progressPct}%` }]} />
+                        </View>
+                      </View>
+                      <Text style={styles.continueItemName} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                    </FocusableItem>
+                  );
+                }}
+              />
+            </View>
+          ) : null}
+
+          {/* Section: Assistir Depois (Filmes e Séries salvos) */}
+          {watchLaterList.length > 0 ? (
+            <View style={styles.sectionContainer}>
+              <View style={styles.sectionTitleRow}>
+                <Ionicons name="time" size={18} color="#FF6A00" />
+                <Text style={styles.sectionTitleWithIcon}>Assistir Depois</Text>
+                <Text style={styles.sectionBadge}>({watchLaterList.length})</Text>
+              </View>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={watchLaterList}
+                keyExtractor={(item) => String(item.id)}
+                contentContainerStyle={styles.horizontalList}
+                renderItem={({ item }) => (
+                  <FocusableItem
+                    style={styles.movieCardItem}
+                    onPress={() => {
+                      if (item.type === 'movie') {
+                        router.push({
+                          pathname: '/(tabs)/movies',
+                          params: { movieId: String(item.id) },
+                        });
+                      } else {
+                        router.push({
+                          pathname: '/(tabs)/series',
+                          params: { seriesId: String(item.id) },
+                        });
+                      }
+                    }}
+                  >
+                    <View style={styles.moviePosterBox}>
+                      {item.poster ? (
+                        <Image
+                          source={{ uri: item.poster }}
+                          style={styles.moviePoster}
+                          contentFit="cover"
+                        />
+                      ) : (
+                        <Ionicons
+                          name={item.type === 'movie' ? 'film-outline' : 'albums-outline'}
+                          size={36}
+                          color={colors.textMuted}
+                        />
+                      )}
+                      <View style={styles.watchLaterTypeBadge}>
+                        <Text style={styles.watchLaterTypeText}>
+                          {item.type === 'movie' ? 'Filme' : 'Série'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.movieItemName} numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                  </FocusableItem>
+                )}
+              />
+            </View>
+          ) : null}
+
+          {/* Section: Canais Favoritos (Se houver) ou Canais em Destaque */}
+          {favoriteChannels.length > 0 ? (
+            <View style={styles.sectionContainer}>
+              <View style={styles.sectionTitleRow}>
+                <Ionicons name="star" size={18} color="#FFD700" />
+                <Text style={styles.sectionTitleWithIcon}>Canais Favoritos</Text>
+                <Text style={styles.sectionBadge}>({favoriteChannels.length})</Text>
+              </View>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={favoriteChannels}
+                keyExtractor={(item) => String(item.stream_id)}
+                contentContainerStyle={styles.horizontalList}
+                renderItem={({ item }) => (
+                  <FocusableItem
+                    style={styles.channelCardItem}
+                    onPress={() => {
+                      router.push({
+                        pathname: '/(tabs)/live',
+                        params: {
+                          channelId: item.stream_id,
+                          autoFullscreen: '1',
+                        },
+                      });
+                    }}
+                  >
+                    <View style={styles.channelPosterBox}>
+                      {item.stream_icon ? (
+                        <Image
+                          source={{ uri: item.stream_icon }}
+                          style={styles.channelPoster}
+                          contentFit="contain"
+                        />
+                      ) : (
+                        <Ionicons name="tv" size={36} color={colors.textMuted} />
+                      )}
+                    </View>
+                    <Text style={styles.channelItemName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                  </FocusableItem>
+                )}
+              />
+            </View>
+          ) : todayChannels.length > 0 ? (
+            <View style={styles.sectionContainer}>
+              <View style={styles.sectionTitleRow}>
+                <Ionicons name="radio-outline" size={18} color={colors.primary} />
+                <Text style={styles.sectionTitleWithIcon}>TV Ao Vivo • Sugestões</Text>
+              </View>
               <FlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -375,12 +580,9 @@ export default function HomeScreen() {
                     style={styles.movieCardItem}
                     onPress={() => {
                       router.push({
-                        pathname: '/player/[id]',
+                        pathname: '/(tabs)/movies',
                         params: {
-                          id: item.stream_id,
-                          type: 'movie',
-                          title: item.name,
-                          extension: item.container_extension || 'mp4',
+                          movieId: String(item.stream_id),
                         },
                       });
                     }}
@@ -606,6 +808,23 @@ const styles = StyleSheet.create({
   sectionContainer: {
     marginBottom: 24,
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 12,
+    gap: 8,
+  },
+  sectionTitleWithIcon: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  sectionBadge: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#F5A623',
+  },
   sectionTitle: {
     fontSize: 17,
     fontWeight: '800',
@@ -616,6 +835,59 @@ const styles = StyleSheet.create({
   horizontalList: {
     paddingHorizontal: 20,
     gap: 14,
+  },
+  continueCardItem: {
+    width: 140,
+  },
+  continuePosterBox: {
+    width: 140,
+    height: 90,
+    borderRadius: 12,
+    backgroundColor: '#181822',
+    borderWidth: 1,
+    borderColor: '#242430',
+    overflow: 'hidden',
+    position: 'relative',
+    marginBottom: 8,
+  },
+  continuePoster: {
+    width: '100%',
+    height: '100%',
+  },
+  continuePosterFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16161f',
+  },
+  playFloatingIcon: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#F5A623',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressBarTrack: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#FF6A00',
+  },
+  continueItemName: {
+    color: '#bbb',
+    fontSize: 12,
+    fontWeight: '600',
   },
   channelCardItem: {
     width: 140,
@@ -664,6 +936,23 @@ const styles = StyleSheet.create({
     color: '#bbb',
     fontSize: 12,
     fontWeight: '600',
+  },
+  watchLaterTypeBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  watchLaterTypeText: {
+    color: '#FF6A00',
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
 
   /* Brand Modal Styles */

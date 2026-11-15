@@ -26,8 +26,10 @@ import { XtreamClient } from '../../src/services/xtreamClient';
 import { IptvCategory, LiveChannel, EpgProgram, SavedAccount } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { uiState } from '../../src/services/uiState';
+import { isAdultCategory } from '../../src/services/parentalControl';
 
 const { width, height } = Dimensions.get('window');
+const FAVORITES_CAT_ID = 'favorites_category';
 
 export default function LiveScreen() {
   const router = useRouter();
@@ -43,7 +45,15 @@ export default function LiveScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<number[]>([]);
+  const [favoriteChannelsList, setFavoriteChannelsList] = useState<LiveChannel[]>([]);
   const [account, setAccount] = useState<SavedAccount | null>(null);
+
+  // Parental Control (PIN de 4 dígitos para categorias e canais Adulto / XXX - Sempre pede PIN)
+  const [pinModalVisible, setPinModalVisible] = useState<boolean>(false);
+  const [targetAdultCategory, setTargetAdultCategory] = useState<IptvCategory | null>(null);
+  const [targetAdultChannel, setTargetAdultChannel] = useState<LiveChannel | null>(null);
+  const [enteredPin, setEnteredPin] = useState<string>('');
+  const [pinError, setPinError] = useState<string | null>(null);
 
   // Fullscreen In-Place Resizing State
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -171,19 +181,44 @@ export default function LiveScreen() {
       setAccount(active);
       const favs = await storage.getFavorites();
       setFavorites(favs || []);
+      const favChs = await storage.getFavoriteChannels();
+      setFavoriteChannelsList(favChs || []);
 
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
-      const cats = await client.getLiveCategories();
-      setCategories(cats || []);
+      const rawCats = await client.getLiveCategories();
+      const cats = rawCats || [];
 
-      // Preload first category channels so player starts playing
-      if (cats && cats.length > 0) {
-        const firstCatId = cats[0].category_id;
-        setOpenCategory(firstCatId);
-        const chs = await client.getLiveStreams(firstCatId);
-        setChannelsByCategory({ [firstCatId]: chs || [] });
-        if (chs && chs.length > 0) {
-          selectChannelForPlayer(chs[0], active);
+      // Se houver canais favoritados, injeta a categoria virtual no topo
+      let finalCats = [...cats];
+      if (favChs && favChs.length > 0) {
+        finalCats = [
+          { category_id: FAVORITES_CAT_ID, category_name: '⭐ Canais Favoritos' },
+          ...cats,
+        ];
+      }
+      setCategories(finalCats);
+
+      // Preload channels (NUNCA carrega canal ou categoria adulta automaticamente)
+      if (favChs && favChs.length > 0) {
+        setOpenCategory(FAVORITES_CAT_ID);
+        setChannelsByCategory({ [FAVORITES_CAT_ID]: favChs });
+        const safeFav = favChs.find((c) => !isAdultCategory(c.name));
+        if (safeFav) {
+          selectChannelForPlayer(safeFav, active);
+        }
+      } else if (cats.length > 0) {
+        const safeCats = cats.filter((c) => !isAdultCategory(c.category_name));
+        const firstSafeCat = safeCats.length > 0 ? safeCats[0] : null;
+
+        if (firstSafeCat) {
+          const firstCatId = firstSafeCat.category_id;
+          setOpenCategory(firstCatId);
+          const chs = await client.getLiveStreams(firstCatId);
+          setChannelsByCategory({ [firstCatId]: chs || [] });
+          const safeCh = chs?.find((c) => !isAdultCategory(c.name));
+          if (safeCh) {
+            selectChannelForPlayer(safeCh, active);
+          }
         }
       } else {
         setErrorMessage('Nenhuma categoria de canais foi retornada pelo servidor IPTV.');
@@ -229,13 +264,37 @@ export default function LiveScreen() {
     }
   };
 
-  const handleToggleCategory = async (catId: string) => {
+  const handleToggleCategory = async (catId: string, categoryItem?: IptvCategory) => {
     if (openCategory === catId) {
       setOpenCategory(null);
       return;
     }
 
+    // Verificação de Controle Parental (Categorias Adulto / XXX)
+    // SEMPRE que clicar na categoria, exige o PIN (não mantém liberado)!
+    if (categoryItem && isAdultCategory(categoryItem.category_name)) {
+      setTargetAdultCategory(categoryItem);
+      setTargetAdultChannel(null);
+      setEnteredPin('');
+      setPinError(null);
+      setPinModalVisible(true);
+      return;
+    }
+
+    openVerifiedCategory(catId);
+  };
+
+  const openVerifiedCategory = async (catId: string) => {
     setOpenCategory(catId);
+
+    // Categoria de Favoritos
+    if (catId === FAVORITES_CAT_ID) {
+      const favChs = await storage.getFavoriteChannels();
+      setFavoriteChannelsList(favChs);
+      setChannelsByCategory((prev) => ({ ...prev, [catId]: favChs }));
+      return;
+    }
+
     if (!channelsByCategory[catId] && account) {
       setLoadingCategory(true);
       try {
@@ -250,9 +309,79 @@ export default function LiveScreen() {
     }
   };
 
-  const handleToggleFavorite = async (streamId: number) => {
-    const isFav = await storage.toggleFavorite(streamId);
-    setFavorites((prev) => (isFav ? [...prev, streamId] : prev.filter((id) => id !== streamId)));
+  const handleConfirmPin = async () => {
+    if (enteredPin.trim().length !== 4) {
+      setPinError('Digite o PIN de 4 dígitos.');
+      return;
+    }
+
+    const isValid = await storage.verifyParentalPin(enteredPin);
+    if (isValid) {
+      setPinModalVisible(false);
+      setEnteredPin('');
+      setPinError(null);
+
+      if (targetAdultCategory) {
+        const catId = targetAdultCategory.category_id;
+        setTargetAdultCategory(null);
+        openVerifiedCategory(catId);
+      } else if (targetAdultChannel) {
+        const ch = targetAdultChannel;
+        setTargetAdultChannel(null);
+        selectChannelForPlayer(ch);
+        handleOpenFullscreen();
+      }
+    } else {
+      setPinError('PIN incorreto. O PIN padrão é 0000.');
+    }
+  };
+
+  const handleToggleFavorite = async (channelOrId: LiveChannel | number) => {
+    let targetChannel: LiveChannel | null = null;
+
+    if (typeof channelOrId === 'object') {
+      targetChannel = channelOrId;
+    } else {
+      // Procura o canal nas listas já carregadas
+      if (activeChannel && activeChannel.stream_id === channelOrId) {
+        targetChannel = activeChannel;
+      } else {
+        for (const catChs of Object.values(channelsByCategory)) {
+          const found = catChs.find((c) => c.stream_id === channelOrId);
+          if (found) {
+            targetChannel = found;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!targetChannel) {
+      // Se não encontrou o objeto completo, faz o toggle simples de ID
+      const streamId = typeof channelOrId === 'number' ? channelOrId : (channelOrId as any).stream_id;
+      const updatedFavs = await storage.toggleFavorite(streamId);
+      setFavorites(updatedFavs);
+      return;
+    }
+
+    const isFavNow = await storage.toggleFavoriteChannel(targetChannel);
+    const updatedFavChs = await storage.getFavoriteChannels();
+    setFavoriteChannelsList(updatedFavChs);
+    setFavorites(updatedFavChs.map((c) => c.stream_id));
+
+    // Atualiza o conteúdo da categoria de favoritos
+    setChannelsByCategory((prev) => ({ ...prev, [FAVORITES_CAT_ID]: updatedFavChs }));
+
+    // Garante que a categoria "⭐ Canais Favoritos" apareça no topo se houver itens
+    setCategories((prev) => {
+      const exists = prev.some((c) => c.category_id === FAVORITES_CAT_ID);
+      if (updatedFavChs.length > 0 && !exists) {
+        return [{ category_id: FAVORITES_CAT_ID, category_name: '⭐ Canais Favoritos' }, ...prev];
+      } else if (updatedFavChs.length === 0 && exists) {
+        return prev.filter((c) => c.category_id !== FAVORITES_CAT_ID);
+      }
+      return prev;
+    });
   };
 
   // Channel Switching (|◀ and ▶|)
@@ -316,6 +445,20 @@ export default function LiveScreen() {
   };
 
   const handleSelectChannelAndOpenFullscreen = (ch: LiveChannel) => {
+    // Se o canal for adulto, solicita PIN antes de tocar
+    const isAdult =
+      isAdultCategory(ch.name) ||
+      (openCategory && categories.some((c) => c.category_id === openCategory && isAdultCategory(c.category_name)));
+
+    if (isAdult) {
+      setTargetAdultCategory(null);
+      setTargetAdultChannel(ch);
+      setEnteredPin('');
+      setPinError(null);
+      setPinModalVisible(true);
+      return;
+    }
+
     selectChannelForPlayer(ch);
     handleOpenFullscreen();
   };
@@ -490,7 +633,7 @@ export default function LiveScreen() {
 
                   <Pressable
                     style={styles.miniControlBtn}
-                    onPress={() => handleToggleFavorite(activeChannel.stream_id)}
+                    onPress={() => handleToggleFavorite(activeChannel)}
                   >
                     <Ionicons
                       name={favorites.includes(activeChannel.stream_id) ? 'star' : 'star-outline'}
@@ -550,18 +693,44 @@ export default function LiveScreen() {
               {filteredCategories.map((cat) => {
                 const isOpen = openCategory === cat.category_id;
                 const catChannels = channelsByCategory[cat.category_id] || [];
+                const isAdult = isAdultCategory(cat.category_name);
+                const isFavCat = cat.category_id === FAVORITES_CAT_ID;
 
                 return (
                   <View key={cat.category_id} style={[styles.accordionItem, isOpen && styles.accordionItemOpen]}>
                     {/* Category Header Row */}
                     <FocusableItem
                       style={styles.categoryHeader}
-                      onPress={() => handleToggleCategory(cat.category_id)}
+                      onPress={() => handleToggleCategory(cat.category_id, cat)}
                     >
                       <View style={styles.categoryInfo}>
-                        <Text style={styles.categoryTitle}>{cat.category_name}</Text>
+                        <View style={styles.categoryTitleRow}>
+                          {isAdult && (
+                            <Ionicons
+                              name={isOpen ? 'lock-open-outline' : 'lock-closed'}
+                              size={16}
+                              color={isOpen ? colors.success : colors.warning}
+                              style={{ marginRight: 6 }}
+                            />
+                          )}
+                          <Text
+                            style={[
+                              styles.categoryTitle,
+                              isFavCat && styles.categoryTitleFav,
+                              isAdult && styles.categoryTitleAdult,
+                            ]}
+                          >
+                            {cat.category_name}
+                          </Text>
+                        </View>
                         <Text style={styles.categoryCount}>
-                          {catChannels.length > 0 ? `${catChannels.length} canais` : 'Toque para carregar'}
+                          {isFavCat
+                            ? `${favoriteChannelsList.length} canais salvos`
+                            : catChannels.length > 0
+                            ? `${catChannels.length} canais`
+                            : isAdult && !isOpen
+                            ? 'Protegido por PIN'
+                            : 'Toque para carregar'}
                         </Text>
                       </View>
 
@@ -623,7 +792,7 @@ export default function LiveScreen() {
                                   style={styles.starBtn}
                                   onPress={(e) => {
                                     e.stopPropagation();
-                                    handleToggleFavorite(ch.stream_id);
+                                    handleToggleFavorite(ch);
                                   }}
                                 >
                                   <Ionicons
@@ -908,6 +1077,79 @@ export default function LiveScreen() {
           </Modal>
         </View>
       ) : null}
+
+      {/* Modal de PIN - Controle Parental para Categorias Adulto / XXX */}
+      <Modal
+        visible={pinModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setPinModalVisible(false);
+          setEnteredPin('');
+          setPinError(null);
+        }}
+      >
+        <View style={styles.pinModalBackdrop}>
+          <View style={styles.pinModalCard}>
+            <View style={styles.pinIconBox}>
+              <Ionicons name="lock-closed" size={32} color="#F5A623" />
+            </View>
+
+            <Text style={styles.pinModalTitle}>Controle Parental</Text>
+            <Text style={styles.pinModalSubtitle}>
+              A categoria{' '}
+              <Text style={{ color: '#F5A623', fontWeight: 'bold' }}>
+                {targetAdultCategory?.category_name}
+              </Text>{' '}
+              é protegida. Digite seu PIN de 4 dígitos para acessar.
+            </Text>
+
+            <View style={styles.pinInputRow}>
+              <TextInput
+                style={[styles.pinTextInput, pinError ? styles.pinInputError : null]}
+                value={enteredPin}
+                onChangeText={(val) => {
+                  setPinError(null);
+                  if (val.length <= 4) setEnteredPin(val.replace(/[^0-9]/g, ''));
+                }}
+                keyboardType="numeric"
+                maxLength={4}
+                secureTextEntry
+                placeholder="••••"
+                placeholderTextColor="#666"
+                autoFocus
+              />
+            </View>
+
+            {pinError ? <Text style={styles.pinErrorText}>{pinError}</Text> : null}
+
+            <Text style={styles.pinHintText}>PIN padrão inicial: 0000 • Altere no Perfil</Text>
+
+            <View style={styles.pinActionsRow}>
+              <Pressable
+                style={styles.pinCancelBtn}
+                onPress={() => {
+                  setPinModalVisible(false);
+                  setEnteredPin('');
+                  setPinError(null);
+                }}
+              >
+                <Text style={styles.pinCancelBtnText}>Cancelar</Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.pinConfirmBtn,
+                  enteredPin.length === 4 ? styles.pinConfirmBtnActive : null,
+                ]}
+                onPress={handleConfirmPin}
+              >
+                <Text style={styles.pinConfirmBtnText}>Desbloquear</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1045,11 +1287,21 @@ const styles = StyleSheet.create({
   categoryInfo: {
     flex: 1,
   },
+  categoryTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   categoryTitle: {
     fontSize: 15,
     fontWeight: '700',
     color: '#fff',
-    marginBottom: 4,
+  },
+  categoryTitleFav: {
+    color: '#FFD700',
+  },
+  categoryTitleAdult: {
+    color: '#FF8A65',
   },
   categoryCount: {
     fontSize: 12,
@@ -1473,5 +1725,113 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '600',
+  },
+
+  /* Modal de PIN - Controle Parental */
+  pinModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  pinModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#16161f',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#262638',
+  },
+  pinIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(245, 166, 35, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  pinModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 8,
+  },
+  pinModalSubtitle: {
+    fontSize: 13,
+    color: '#aaa',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+  },
+  pinInputRow: {
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  pinTextInput: {
+    width: 180,
+    height: 52,
+    backgroundColor: '#0c0c12',
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#333348',
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 14,
+    textAlign: 'center',
+  },
+  pinInputError: {
+    borderColor: '#ff4444',
+  },
+  pinErrorText: {
+    color: '#ff4444',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  pinHintText: {
+    color: '#777',
+    fontSize: 11,
+    marginTop: 8,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  pinActionsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  pinCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#222230',
+    alignItems: 'center',
+  },
+  pinCancelBtnText: {
+    color: '#aaa',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pinConfirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#44445a',
+    alignItems: 'center',
+  },
+  pinConfirmBtnActive: {
+    backgroundColor: '#F5A623',
+  },
+  pinConfirmBtnText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

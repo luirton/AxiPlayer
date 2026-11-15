@@ -15,9 +15,8 @@ export default function SplashScreen() {
 
     async function initApp() {
       try {
-        // [Expo Go Dev] Comentado para não travar no Expo Go durante testes:
-        // if (isMounted) setStatusText('Verificando permissões...');
-        // await requestInitialPermissions();
+        if (isMounted) setStatusText('Verificando permissões...');
+        await requestInitialPermissions();
 
         if (isMounted) setStatusText('Carregando conta...');
         const active = await storage.getActiveAccount();

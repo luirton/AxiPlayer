@@ -131,8 +131,26 @@ export default function PlayerScreen() {
       }
       setAccount(active);
 
-      const favs = await storage.getFavorites();
-      setIsFavorite(favs.includes(Number(params.id)));
+      if (params.type === 'movie') {
+        const favs = await storage.getMovieFavorites();
+        setIsFavorite(favs.includes(Number(params.id)));
+      } else if (params.type === 'series') {
+        const favs = await storage.getSeriesFavorites();
+        setIsFavorite(favs.includes(Number(params.id)));
+      } else {
+        const favs = await storage.getFavorites();
+        setIsFavorite(favs.includes(Number(params.id)));
+      }
+
+      // Check saved progress for resuming playback
+      if (params.type === 'movie' || params.type === 'series') {
+        const saved = await storage.getWatchProgress(params.id);
+        if (saved && saved.positionSec > 10 && player) {
+          try {
+            player.currentTime = saved.positionSec;
+          } catch (e) {}
+        }
+      }
 
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
 
@@ -244,10 +262,44 @@ export default function PlayerScreen() {
   };
 
   const handleToggleFavorite = async () => {
-    const updatedFavs = await storage.toggleFavorite(currentStreamId);
-    setIsFavorite(updatedFavs.includes(currentStreamId));
+    if (params.type === 'movie') {
+      const updated = await storage.toggleMovieFavorite(currentStreamId);
+      setIsFavorite(updated.includes(currentStreamId));
+    } else if (params.type === 'series') {
+      const updated = await storage.toggleSeriesFavorite(currentStreamId);
+      setIsFavorite(updated.includes(currentStreamId));
+    } else {
+      const updated = await storage.toggleFavorite(currentStreamId);
+      setIsFavorite(updated.includes(currentStreamId));
+    }
     resetControlsTimer();
   };
+
+  // Salva periodicamente o progresso de reprodução para Filmes e Séries
+  useEffect(() => {
+    if (params.type !== 'movie' && params.type !== 'series') return;
+
+    const saveCurrentProgress = () => {
+      if (player && player.currentTime > 5 && player.duration > 0) {
+        storage.saveWatchProgress({
+          id: currentStreamId,
+          title: currentTitle,
+          poster: params.icon,
+          type: params.type,
+          positionSec: Math.floor(player.currentTime),
+          durationSec: Math.floor(player.duration),
+          extension: params.extension,
+        });
+      }
+    };
+
+    const interval = setInterval(saveCurrentProgress, 5000);
+
+    return () => {
+      clearInterval(interval);
+      saveCurrentProgress();
+    };
+  }, [player, currentStreamId, currentTitle]);
 
   // Controls Visibility Timer
   const resetControlsTimer = () => {

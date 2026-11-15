@@ -50,36 +50,51 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
 
 ### 4.2 Dashboard Principal (Home)
 * Banner hero dinâmico com lançamentos em destaque e pôsteres em alta definição (TMDB).
-* Acesso rápido em grade responsiva (com suporte a controle remoto):
-  * 📺 **TV Ao Vivo** (Canais organizados por categorias)
-  * 🎬 **Filmes** (Catálogo VOD com busca e filtros)
-  * 🍿 **Séries** (Organização por temporadas e episódios)
-  * ⭐ **Favoritos** (Canais e conteúdos favoritados)
-  * 🕒 **Continuar Assistindo / Histórico**
-  * 📅 **Guia de Programação (EPG)**
+* **Chips de Navegação Rápida:** `[ Tudo ]`, `[ Ao vivo ]` (logo após Tudo, com redirecionamento direto), `[ Séries ]`, `[ Filmes ]`.
+* **⭐ Canais Favoritos:** Carrossel dinâmico dos canais de TV favoritados pelo usuário com acesso e reprodução com 1 toque.
+* **🕒 Assistir Depois (Exibição Única):** Carrossel dinâmico de filmes e séries salvos para ver mais tarde com badge indicativo de tipo (`Filme` / `Série`). Ao tocar em qualquer título, abre diretamente a tela de detalhes com informações completas e backdrop 16:9.
+* **▶ Continuar Assistindo:** Histórico com barra de progresso visual (laranja/ouro) no rodapé das miniaturas de filmes e séries iniciados. Ao tocar, direciona para a tela de detalhes antes de reproduzir.
+* **Marcas de Streaming:** Carrossel de plataformas (Netflix, Prime Video, Disney+, Max, etc.) com modal de escolha entre Filmes e Séries.
+* **Filmes Recentes:** Carrossel com os lançamentos mais recentes retornados pelo provedor IPTV, abrindo a tela de informações detalhadas com 1 toque.
 
 ### 4.3 Módulo TV Ao Vivo & EPG
-* Lista de categorias com contagem de canais.
-* Grade de canais com logos dos canais, programa atual e barra de progresso.
-* Janela de pré-visualização rápida ou tela cheia instantânea.
+* **⭐ Categoria "Canais Favoritos" Dinâmica:** Criada automaticamente no topo da lista assim que qualquer canal é favoritado com a estrela.
+* **🔒 Controle Parental Estrito com PIN de 4 Dígitos:**
+  * Categorias e canais adultos / XXX (`xxx`, `adulto`, `+18`, etc.) **sempre exigem o PIN numérico** a cada clique (nunca permanecem liberados permanentemente após desbloqueio).
+  * **Proteção de Inicialização:** Ao entrar na tela de TV ao vivo, o app nunca inicia automaticamente qualquer canal ou categoria adulta no player de fundo.
+* Lista de categorias em acordeão expansível com contagem de canais e indicador de status (bloqueado/desbloqueado).
+* Grade de canais com logos, programa atual e botão de favoritar direto.
+* Mini Player no topo com visualização em tempo real do canal selecionado, botão `[ ⛶ Abrir ]` para tela cheia e botões de Cast e Favoritar.
 * Troca rápida de canal via D-pad (Cima / Baixo) durante a reprodução.
 
 ### 4.4 Módulo Filmes & Séries (VOD)
-* **Navegação Moderna por Abas Horizontais (Fiel à Imagem de Referência):**
-  * Barra de abas horizontais no topo com scroll fluido: `[ Para você ]`, `[ Lançamentos ]`, `[ Séries Pedidos ]`, `[ Ação ]`, etc.
-  * Aba ativa destacada com texto em branco `#FFFFFF` e sublinhado âmbar/ouro `#FFA000`.
-* **Card Hero Imersivo de Destaque:**
-  * Pôster em alta definição vertical ocupando 100% da largura.
-  * Gradiente OLED escuro com título em destaque.
-  * Metadados em tempo real: Nota (ex: `⭐ 8.0`), Ano de lançamento e Gêneros.
-  * Botão de ação em pílula gradiente Sunset/Fire `[ ▶ Assistir agora ]`.
-  * Sinopse / plot descritivo elegante.
-* **Carrosséis Horizontais de Conteúdo:**
-  * Cabeçalho de categoria com badge de contagem (ex: `84`) e ação rápida `Ver todos >`.
-  * Carrossel de pôsteres cinematográficos em proporção 2:3 com nota e título.
-  * Grade complementar para exploração rápida de mais títulos.
-* Para Séries:
-  * Modal avançado de Temporadas (Temporada 1, 2, etc.) e Episódios com duração e reprodução direta.
+* **Abertura e Tela de Detalhes Cinematográfica (Design Premium 16:9):**
+  * Backdrop imersivo 16:9 no topo com gradiente suave na base e botão de voltar flutuante.
+  * Título em destaque, ano de lançamento, gênero e formato de áudio/vídeo.
+  * Botão grande em pílula gradiente laranja/ouro: `[ ▷ Assistir ]`.
+  * **Regra de Auto-Inclusão:** Clicar em "Assistir" ou em qualquer episódio inclui automaticamente o título na **Minha Lista**.
+  * **3 Ações Rápidas em Linha:**
+    1. `+ Minha lista` (ou `✓ Na lista`)
+    2. `🕒 Assistir depois` (ou `✓ Salvo`)
+    3. `⭐ [Nota]` (Favoritar)
+  * Sinopse descritiva com expansor `Ver mais / Ver menos`, elenco e direção.
+  * **Recomendações Baseadas na Categoria:**
+    * Filmes: Seção horizontal `Você também pode gostar` com outros títulos da mesma categoria.
+    * Séries: Abas `Episódios` e `Títulos semelhantes`.
+  * Para Séries:
+    * Seletor horizontal de temporadas (Temporada 1, 2, etc.) e lista vertical de episódios no estilo do app, com duração e botão de play individual (com auto-inclusão na Minha Lista).
+* **🔒 Proteção Parental Estrita:** Filmes e séries de categorias adultas exigem validação do PIN de 4 dígitos antes da exibição dos detalhes ou reprodução.
+
+### 4.5 Gerenciador de Listas & Coleções no Menu
+* **Seção "Minhas Listas & Coleções" em Configurações:**
+  * Indicadores com contagem em tempo real para:
+    * `⭐ Meus Favoritos` (Canais, Filmes e Séries)
+    * `📑 Minha Lista`
+    * `🕒 Assistir Depois`
+  * **Modal Gerenciador Completo:**
+    * Abas superiores para alternar entre Favoritos, Minha Lista e Assistir Depois.
+    * Subfiltros na aba de Favoritos: `Todos`, `Ao Vivo`, `Filmes`, `Séries`.
+    * Ações rápidas por item: botão `[ ▶ ]` para reprodução direta e `[ 🗑 ]` para remoção instantânea da lista com atualização dinâmica dos dados.
 
 ### 4.5 Player Avançado (Fiel ao Modelo IBO Smarters)
 * **Controles completíssimos:**
@@ -93,21 +108,23 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
   * Gaveta lateral de canais (`[ ≡ Canais ]`): troca rápida de canal sem sair da reprodução.
   * Guia de programação interativo (`[ 📅 Programação ]`).
   * Botão de favoritar canal (`[ ⭐ Favoritar ]`).
+  * **Gravação Automática de Progresso:** A cada 5 segundos salva a minutagem atual de filmes e séries para permitir "Continuar Assistindo".
 
-### 4.6 Interface Mobile & TV (Fiel aos Screenshots)
+### 4.6 Interface Mobile & TV
 * **Barra de Navegação Flutuante em Pílula:**
-  * `[ ≡ Menu ]`, `[ 🏠 Início ]`, `[ ((•)) TV ao vivo ]` com pílula de destaque em gradiente laranja/ouro.
-* **Tela de Início:**
-  * Chips de filtro (`Tudo`, `Séries`, `Filmes`, `Categorias`).
-  * Card Hero vertical de destaque com botão gradiente `[ ▷ Assistir agora ]`.
-  * Carrossel de jogos e canais ao vivo abaixo.
-* **Tela de TV Ao Vivo:**
-  * Mini Player no topo com visualização em tempo real do canal selecionado, botão `[ ⛶ Abrir ]` para tela cheia e botões de Cast e Favoritar.
-  * Lista de categorias em acordeão expansível com indicador de canais e botão `Abrir >` / `Fechar v`.
+  * `[ ≡ Menu ]`, `[ 🏠 Início ]`, `[ ((•)) TV ao vivo ]` com pílula de destaque suspensa acima dos botões virtuais do Android.
+* **Modo Imersivo Android:** Oculta a barra virtual do sistema operacional para evitar colisões com gestos e navegação.
+* **Tela de Busca Global Unificada (`/search`):**
+  * Campo de busca integrado com limpeza rápida (`✕`).
+  * Abas de filtragem ordenadas: `[ Todos ]` (inicial padrão), `[ Filmes ]`, `[ Séries ]`.
+  * Contador dinâmico `Resultado da busca (X)`.
+  * Grade responsiva de pôsteres em proporção 2:3 com abertura instantânea da tela de informações e detalhes do filme ou série antes da reprodução.
 
-### 4.6 Configurações
-* **Perfis & Parental Control:** Bloqueio de categorias por PIN de 4 dígitos.
+### 4.7 Configurações & Perfil
+* **Controle dos Pais & PIN Parental:**
+  * Configuração e alteração do PIN numérico de 4 dígitos com validação de PIN atual e confirmação.
 * **Formato de Transmissão:** Escolha entre MPEG-TS (`.ts`) ou HLS (`.m3u8`).
+* **Motor Padrão do Player:** Alternância entre ExoPlayer Nativo e LibVLC.
 * **Cache & Armazenamento:** Opção de limpar cache do EPG e dados temporários.
 
 ---

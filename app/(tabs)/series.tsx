@@ -16,16 +16,17 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme/colors';
-import { storage } from '../../src/services/storage';
+import { storage, MediaListItem } from '../../src/services/storage';
 import { XtreamClient } from '../../src/services/xtreamClient';
 import { IptvCategory, SeriesItem, SeriesInfoResponse, SavedAccount } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
+import { isAdultCategory } from '../../src/services/parentalControl';
 
 const { width } = Dimensions.get('window');
 
 export default function SeriesScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ brand?: string; brandName?: string }>();
+  const params = useLocalSearchParams<{ brand?: string; brandName?: string; seriesId?: string }>();
   const [categories, setCategories] = useState<IptvCategory[]>([]);
   const [seriesList, setSeriesList] = useState<SeriesItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('for_you');
@@ -37,19 +38,67 @@ export default function SeriesScreen() {
   const [loadingSeries, setLoadingSeries] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [account, setAccount] = useState<SavedAccount | null>(null);
+  const [seriesFavorites, setSeriesFavorites] = useState<number[]>([]);
 
   // Hero Item
   const [heroSeries, setHeroSeries] = useState<SeriesItem | null>(null);
 
-  // Detail Modal state
+  // Detail Modal state (Fiel à Imagem 2)
   const [selectedSeries, setSelectedSeries] = useState<SeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<SeriesInfoResponse | null>(null);
   const [activeSeason, setActiveSeason] = useState<string>('1');
   const [loadingInfo, setLoadingInfo] = useState(false);
+  const [isSeriesInList, setIsSeriesInList] = useState(false);
+  const [isSeriesWatchLater, setIsSeriesWatchLater] = useState(false);
+  const [isSeriesPlotExpanded, setIsSeriesPlotExpanded] = useState(false);
+  const [seriesDetailSubTab, setSeriesDetailSubTab] = useState<'episodes' | 'similar'>('episodes');
+
+  // Parental PIN para Séries Adultas
+  const [targetAdultSeries, setTargetAdultSeries] = useState<SeriesItem | null>(null);
+  const [adultPinModalVisible, setAdultPinModalVisible] = useState(false);
+  const [adultPinInput, setAdultPinInput] = useState('');
+  const [adultPinError, setAdultPinError] = useState<string | null>(null);
 
   useEffect(() => {
     initSeries();
   }, [params.brand]);
+
+  useEffect(() => {
+    if (params.seriesId && account) {
+      handleOpenSeriesFromParam(Number(params.seriesId));
+    }
+  }, [params.seriesId, account]);
+
+  const handleOpenSeriesFromParam = async (seriesId: number) => {
+    const found = seriesList.find((s) => s.series_id === seriesId);
+    if (found) {
+      handleSeriesClick(found);
+      return;
+    }
+    if (account) {
+      try {
+        const client = new XtreamClient(account.serverUrl, account.username, account.password);
+        const info = await client.getSeriesInfo(seriesId);
+        const seriesObj: SeriesItem = {
+          num: 0,
+          name: info?.info?.name || 'Série',
+          series_id: seriesId,
+          cover: info?.info?.cover || '',
+          plot: info?.info?.plot || '',
+          cast: info?.info?.cast || '',
+          director: info?.info?.director || '',
+          genre: info?.info?.genre || '',
+          releaseDate: info?.info?.releaseDate || '',
+          rating: info?.info?.rating || '0',
+          rating_5based: 0,
+          category_id: (info?.info as any)?.category_id || '',
+        };
+        handleSeriesClick(seriesObj);
+      } catch (e) {
+        console.warn('Erro ao carregar serie por param:', e);
+      }
+    }
+  };
 
   const initSeries = async () => {
     setLoading(true);
@@ -61,6 +110,9 @@ export default function SeriesScreen() {
         return;
       }
       setAccount(active);
+
+      const favs = await storage.getSeriesFavorites();
+      setSeriesFavorites(favs || []);
 
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
       const cats = await client.getSeriesCategories();
@@ -107,6 +159,15 @@ export default function SeriesScreen() {
     if (!account) return;
     setLoadingSeries(true);
     try {
+      if (catId === 'favorites') {
+        const favSeries = await storage.getFavoriteSeries();
+        setSeriesList(favSeries || []);
+        if (favSeries && favSeries.length > 0) {
+          setHeroSeries(favSeries[0]);
+        }
+        return;
+      }
+
       const client = new XtreamClient(account.serverUrl, account.username, account.password);
       const s = catId === 'for_you'
         ? (categories.length > 0 ? await client.getSeries(categories[0].category_id) : await client.getSeries())
@@ -123,22 +184,195 @@ export default function SeriesScreen() {
     }
   };
 
+  const handleToggleFavoriteSeries = async (series: SeriesItem) => {
+    const isFavNow = await storage.toggleFavoriteSeries(series);
+    const updatedFavs = await storage.getSeriesFavorites();
+    setSeriesFavorites(updatedFavs);
+
+    if (selectedCategory === 'favorites') {
+      const favSeries = await storage.getFavoriteSeries();
+      setSeriesList(favSeries);
+      if (heroSeries?.series_id === series.series_id && favSeries.length > 0) {
+        setHeroSeries(favSeries[0]);
+      }
+    }
+  };
+
+  const handleSeriesClick = (item: SeriesItem) => {
+    const isAdult =
+      isAdultCategory(selectedCategoryName) ||
+      isAdultCategory(item.name) ||
+      (item.category_id && categories.some((c) => c.category_id === item.category_id && isAdultCategory(c.category_name)));
+
+    if (isAdult) {
+      setTargetAdultSeries(item);
+      setAdultPinInput('');
+      setAdultPinError(null);
+      setAdultPinModalVisible(true);
+      return;
+    }
+
+    handleOpenSeries(item);
+  };
+
+  const handleConfirmAdultSeriesPin = async () => {
+    if (adultPinInput.trim().length !== 4) {
+      setAdultPinError('Digite o PIN de 4 dígitos.');
+      return;
+    }
+
+    const isValid = await storage.verifyParentalPin(adultPinInput);
+    if (isValid) {
+      setAdultPinModalVisible(false);
+      if (targetAdultSeries) {
+        const item = targetAdultSeries;
+        setTargetAdultSeries(null);
+        handleOpenSeries(item);
+      }
+    } else {
+      setAdultPinError('PIN incorreto. (Padrão: 0000)');
+    }
+  };
+
   const handleOpenSeries = async (item: SeriesItem) => {
     setSelectedSeries(item);
     setSeriesInfo(null);
+    setIsSeriesPlotExpanded(false);
+    setSeriesDetailSubTab('episodes');
     setLoadingInfo(true);
-    if (!account) return;
+
     try {
-      const client = new XtreamClient(account.serverUrl, account.username, account.password);
-      const info = await client.getSeriesInfo(item.series_id);
-      setSeriesInfo(info);
-      const firstSeason = Object.keys(info?.episodes || {})[0] || '1';
-      setActiveSeason(firstSeason);
+      const inList = await storage.isInMyList(item.series_id);
+      setIsSeriesInList(inList);
+      const inWatchLater = await storage.isInWatchLater(item.series_id);
+      setIsSeriesWatchLater(inWatchLater);
+
+      if (account) {
+        const client = new XtreamClient(account.serverUrl, account.username, account.password);
+        const info = await client.getSeriesInfo(item.series_id);
+        setSeriesInfo(info);
+        const firstSeason = Object.keys(info?.episodes || {})[0] || '1';
+        setActiveSeason(firstSeason);
+      }
     } catch (err) {
       console.warn('Error fetching series info:', err);
     } finally {
       setLoadingInfo(false);
     }
+  };
+
+  const handleWatchFirstEpisode = async (series: SeriesItem) => {
+    // Sempre que clicar em assistir já incluir na minha lista
+    const mediaItem: MediaListItem = {
+      id: series.series_id,
+      title: series.name,
+      poster: series.cover,
+      backdrop: seriesInfo?.info?.backdrop_path?.[0] || series.cover,
+      type: 'series',
+      category_id: series.category_id,
+      category_name: selectedCategoryName,
+      rating: series.rating ? String(series.rating) : undefined,
+      year: series.releaseDate?.slice(0, 4) || '2025',
+      genre: series.genre || seriesInfo?.info?.genre,
+      plot: seriesInfo?.info?.plot || series.plot,
+      addedAt: Date.now(),
+      rawItem: series,
+    };
+    await storage.addToMyList(mediaItem);
+    setIsSeriesInList(true);
+
+    // Encontra o primeiro episódio disponível
+    const currentSeasonEps = seriesInfo?.episodes?.[activeSeason] || [];
+    const firstEp = currentSeasonEps[0] || Object.values(seriesInfo?.episodes || {})?.[0]?.[0];
+
+    if (firstEp) {
+      setSelectedSeries(null);
+      router.push({
+        pathname: '/player/[id]',
+        params: {
+          id: firstEp.id,
+          type: 'series',
+          title: `${series.name} - T${activeSeason}:E${firstEp.episode_num} ${firstEp.title || ''}`,
+          extension: firstEp.container_extension || 'mp4',
+          icon: series.cover,
+        },
+      });
+    }
+  };
+
+  const handlePlayEpisode = async (series: SeriesItem, ep: any, seasonNum: string) => {
+    // Regra: Sempre que clicar em assistir já incluir na minha lista
+    const mediaItem: MediaListItem = {
+      id: series.series_id,
+      title: series.name,
+      poster: series.cover,
+      backdrop: seriesInfo?.info?.backdrop_path?.[0] || series.cover,
+      type: 'series',
+      category_id: series.category_id,
+      category_name: selectedCategoryName,
+      rating: series.rating ? String(series.rating) : undefined,
+      year: series.releaseDate?.slice(0, 4) || '2025',
+      genre: series.genre || seriesInfo?.info?.genre,
+      plot: seriesInfo?.info?.plot || series.plot,
+      addedAt: Date.now(),
+      rawItem: series,
+    };
+    await storage.addToMyList(mediaItem);
+    setIsSeriesInList(true);
+
+    setSelectedSeries(null);
+    router.push({
+      pathname: '/player/[id]',
+      params: {
+        id: ep.id,
+        type: 'series',
+        title: `${series.name} - T${seasonNum}:E${ep.episode_num} ${ep.title || ''}`,
+        extension: ep.container_extension || 'mp4',
+        icon: series.cover,
+      },
+    });
+  };
+
+  const handleToggleMyListSeries = async (series: SeriesItem) => {
+    const mediaItem: MediaListItem = {
+      id: series.series_id,
+      title: series.name,
+      poster: series.cover,
+      backdrop: seriesInfo?.info?.backdrop_path?.[0] || series.cover,
+      type: 'series',
+      category_id: series.category_id,
+      category_name: selectedCategoryName,
+      rating: series.rating ? String(series.rating) : undefined,
+      year: series.releaseDate?.slice(0, 4) || '2025',
+      genre: series.genre || seriesInfo?.info?.genre,
+      plot: seriesInfo?.info?.plot || series.plot,
+      addedAt: Date.now(),
+      rawItem: series,
+    };
+
+    const inList = await storage.toggleMyList(mediaItem);
+    setIsSeriesInList(inList);
+  };
+
+  const handleToggleWatchLaterSeries = async (series: SeriesItem) => {
+    const mediaItem: MediaListItem = {
+      id: series.series_id,
+      title: series.name,
+      poster: series.cover,
+      backdrop: seriesInfo?.info?.backdrop_path?.[0] || series.cover,
+      type: 'series',
+      category_id: series.category_id,
+      category_name: selectedCategoryName,
+      rating: series.rating ? String(series.rating) : undefined,
+      year: series.releaseDate?.slice(0, 4) || '2025',
+      genre: series.genre || seriesInfo?.info?.genre,
+      plot: seriesInfo?.info?.plot || series.plot,
+      addedAt: Date.now(),
+      rawItem: series,
+    };
+
+    const inWatchLater = await storage.toggleWatchLater(mediaItem);
+    setIsSeriesWatchLater(inWatchLater);
   };
 
   const filteredSeries = seriesList.filter((s) =>
@@ -158,10 +392,10 @@ export default function SeriesScreen() {
 
         <Pressable
           style={styles.searchIconButton}
-          onPress={() => setIsSearchOpen(!isSearchOpen)}
+          onPress={() => router.push({ pathname: '/search', params: { initialType: 'series' } })}
           hitSlop={10}
         >
-          <Ionicons name={isSearchOpen ? 'close' : 'search'} size={22} color="#fff" />
+          <Ionicons name="search" size={22} color="#fff" />
         </Pressable>
       </View>
 
@@ -201,6 +435,17 @@ export default function SeriesScreen() {
               Para você
             </Text>
             {selectedCategory === 'for_you' && <View style={styles.activeTabIndicator} />}
+          </Pressable>
+
+          {/* Aba: Meus Favoritos */}
+          <Pressable
+            style={[styles.categoryTabItem, selectedCategory === 'favorites' && styles.categoryTabItemActive]}
+            onPress={() => handleSelectCategory('favorites', '⭐ Meus Favoritos')}
+          >
+            <Text style={[styles.categoryTabText, selectedCategory === 'favorites' && styles.categoryTabTextActive]}>
+              ⭐ Favoritos
+            </Text>
+            {selectedCategory === 'favorites' && <View style={styles.activeTabIndicator} />}
           </Pressable>
 
           {/* Abas das Categorias do Provedor */}
@@ -284,21 +529,34 @@ export default function SeriesScreen() {
                     ) : null}
                   </View>
 
-                  {/* Botão Assistir Agora em Formato Pílula Gradiente */}
-                  <FocusableItem
-                    style={styles.heroWatchBtn}
-                    onPress={() => handleOpenSeries(heroSeries)}
-                  >
-                    <LinearGradient
-                      colors={['#FF6A00', '#FFA000']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.heroWatchGradient}
+                  {/* Botões de Ação: Assistir Agora e Favoritar */}
+                  <View style={styles.heroActionsRow}>
+                    <FocusableItem
+                      style={styles.heroWatchBtn}
+                      onPress={() => handleSeriesClick(heroSeries)}
                     >
-                      <Ionicons name="play" size={16} color="#000" />
-                      <Text style={styles.heroWatchText}>Assistir agora</Text>
-                    </LinearGradient>
-                  </FocusableItem>
+                      <LinearGradient
+                        colors={['#FF6A00', '#FFA000']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.heroWatchGradient}
+                      >
+                        <Ionicons name="play" size={16} color="#000" />
+                        <Text style={styles.heroWatchText}>Assistir agora</Text>
+                      </LinearGradient>
+                    </FocusableItem>
+
+                    <Pressable
+                      style={styles.heroFavBtn}
+                      onPress={() => handleToggleFavoriteSeries(heroSeries)}
+                    >
+                      <Ionicons
+                        name={seriesFavorites.includes(heroSeries.series_id) ? 'star' : 'star-outline'}
+                        size={20}
+                        color={seriesFavorites.includes(heroSeries.series_id) ? '#FFD700' : '#fff'}
+                      />
+                    </Pressable>
+                  </View>
 
                   {/* Sinopse da Série */}
                   <Text style={styles.heroPlot} numberOfLines={2}>
@@ -344,7 +602,7 @@ export default function SeriesScreen() {
                 return (
                   <FocusableItem
                     style={styles.cardItem}
-                    onPress={() => handleOpenSeries(item)}
+                    onPress={() => handleSeriesClick(item)}
                   >
                     <View style={styles.cardPosterBox}>
                       {item.cover ? (
@@ -365,6 +623,22 @@ export default function SeriesScreen() {
                           <Text style={styles.cardRatingText}>{ratingStr}</Text>
                         </View>
                       ) : null}
+
+                      {/* Botão Favoritar no Card de Série */}
+                      <Pressable
+                        style={styles.cardFavBtn}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleToggleFavoriteSeries(item);
+                        }}
+                        hitSlop={8}
+                      >
+                        <Ionicons
+                          name={seriesFavorites.includes(item.series_id) ? 'star' : 'star-outline'}
+                          size={14}
+                          color={seriesFavorites.includes(item.series_id) ? '#FFD700' : 'rgba(255,255,255,0.7)'}
+                        />
+                      </Pressable>
                     </View>
                     <Text style={styles.cardTitle} numberOfLines={2}>
                       {item.name}
@@ -384,7 +658,7 @@ export default function SeriesScreen() {
                   <FocusableItem
                     key={item.series_id}
                     style={styles.gridCardItem}
-                    onPress={() => handleOpenSeries(item)}
+                    onPress={() => handleSeriesClick(item)}
                   >
                     <View style={styles.gridPosterBox}>
                       {item.cover ? (
@@ -410,7 +684,7 @@ export default function SeriesScreen() {
         </ScrollView>
       )}
 
-      {/* Modal Detalhes da Série / Episódios */}
+      {/* Modal Detalhes da Série / Episódios (Fiel à Imagem 2) */}
       <Modal
         visible={Boolean(selectedSeries)}
         animationType="slide"
@@ -418,99 +692,386 @@ export default function SeriesScreen() {
         onRequestClose={() => setSelectedSeries(null)}
       >
         <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <FocusableItem
-              style={styles.modalCloseBtn}
+          {/* Top Bar com botão voltar e título */}
+          <View style={styles.seriesDetailTopBar}>
+            <Pressable
+              style={styles.detailBackBtn}
               onPress={() => setSelectedSeries(null)}
+              hitSlop={10}
             >
-              <Ionicons name="arrow-back" size={24} color="#fff" />
-            </FocusableItem>
-            <Text style={styles.modalTitle} numberOfLines={1}>
-              {selectedSeries?.name || 'Detalhes da Série'}
+              <Ionicons name="chevron-back" size={26} color="#fff" />
+            </Pressable>
+            <Text style={styles.detailTopBarTitle} numberOfLines={1}>
+              {selectedSeries?.name || ''}
             </Text>
           </View>
 
           {loadingInfo ? (
             <View style={styles.centerBox}>
               <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={styles.loadingText}>Carregando episódios...</Text>
+              <Text style={styles.loadingText}>Carregando episódios e detalhes...</Text>
             </View>
           ) : (
-            <ScrollView contentContainerStyle={styles.modalContent}>
-              <View style={styles.modalInfoCard}>
+            <ScrollView
+              style={styles.detailScrollView}
+              contentContainerStyle={styles.detailScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Backdrop / Imagem 16:9 no Topo */}
+              <View style={styles.backdropWrapper}>
                 {selectedSeries?.cover ? (
                   <Image
                     source={{ uri: selectedSeries.cover }}
-                    style={styles.modalPoster}
+                    style={styles.backdropImage}
                     contentFit="cover"
                   />
-                ) : null}
-                <View style={styles.modalInfoDetails}>
-                  <Text style={styles.modalSeriesName}>{selectedSeries?.name || ''}</Text>
-                  <Text style={styles.modalPlot}>
-                    {seriesInfo?.info?.plot || selectedSeries?.plot || 'Sem sinopse disponível.'}
-                  </Text>
-                  {selectedSeries?.genre ? (
-                    <Text style={styles.modalGenre}>Gênero: {selectedSeries.genre}</Text>
-                  ) : null}
-                </View>
+                ) : (
+                  <View style={styles.backdropFallback}>
+                    <Ionicons name="albums" size={64} color="#333" />
+                  </View>
+                )}
+                <LinearGradient
+                  colors={['transparent', 'rgba(7,7,9,0.5)', '#070709']}
+                  style={styles.backdropGradient}
+                />
               </View>
 
-              {seriesInfo?.episodes && Object.keys(seriesInfo.episodes).length > 0 ? (
-                <>
-                  <Text style={styles.seasonsHeader}>Temporadas</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.seasonsScroll}>
-                    {Object.keys(seriesInfo.episodes).map((seasonNum) => {
-                      const isActive = activeSeason === seasonNum;
-                      return (
-                        <FocusableItem
-                          key={seasonNum}
-                          style={[styles.seasonChip, isActive && styles.seasonChipActive]}
-                          onPress={() => setActiveSeason(seasonNum)}
+              {/* Informações Principais da Série */}
+              <View style={styles.detailBody}>
+                <Text style={styles.detailSeriesTitle}>{selectedSeries?.name || ''}</Text>
+
+                {/* Metadados: Ano • Qtd Temporadas • Gêneros */}
+                <View style={styles.detailMetaRow}>
+                  <Text style={styles.detailYearText}>
+                    {selectedSeries?.releaseDate?.slice(0, 4) || '2025'}
+                  </Text>
+                  <Text style={styles.detailMetaDot}>•</Text>
+                  <Text style={styles.detailMetaText}>
+                    {seriesInfo?.episodes ? `${Object.keys(seriesInfo.episodes).length} Temporadas` : '1 Temporada'}
+                  </Text>
+                  <Text style={styles.detailMetaDot}>•</Text>
+                  <Text style={styles.detailGenreText} numberOfLines={1}>
+                    {selectedSeries?.genre || seriesInfo?.info?.genre || selectedCategoryName || 'Série'}
+                  </Text>
+                </View>
+
+                {/* Botão Assistir Grande em Pílula Gradiente */}
+                <FocusableItem
+                  style={styles.detailWatchNowBtn}
+                  onPress={() => selectedSeries && handleWatchFirstEpisode(selectedSeries)}
+                >
+                  <LinearGradient
+                    colors={['#FF6A00', '#FFA000']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.detailWatchGradient}
+                  >
+                    <Ionicons name="play" size={18} color="#000" />
+                    <Text style={styles.detailWatchText}>Assistir</Text>
+                  </LinearGradient>
+                </FocusableItem>
+
+                {/* Info do Episódio em Destaque */}
+                <Text style={styles.episodeHighlightText}>
+                  T{activeSeason} E1 • Episódio 1
+                </Text>
+
+                {/* Sinopse com "Ver mais" / "Ver menos" */}
+                <View style={styles.plotContainer}>
+                  <Text
+                    style={styles.detailPlotText}
+                    numberOfLines={isSeriesPlotExpanded ? undefined : 3}
+                  >
+                    {seriesInfo?.info?.plot ||
+                      selectedSeries?.plot ||
+                      `Assista a todos os episódios imperdíveis de "${selectedSeries?.name}". Alta definição e som envolvente.`}
+                  </Text>
+                  <Pressable onPress={() => setIsSeriesPlotExpanded(!isSeriesPlotExpanded)}>
+                    <Text style={styles.plotToggleText}>
+                      {isSeriesPlotExpanded ? 'Ver menos' : 'Ver mais'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {/* Elenco e Direção */}
+                {seriesInfo?.info?.cast ? (
+                  <Text style={styles.detailCreditsText} numberOfLines={2}>
+                    <Text style={styles.creditsLabel}>Elenco: </Text>
+                    {seriesInfo.info.cast}
+                  </Text>
+                ) : null}
+
+                {seriesInfo?.info?.director ? (
+                  <Text style={styles.detailCreditsText} numberOfLines={1}>
+                    <Text style={styles.creditsLabel}>Direção: </Text>
+                    {seriesInfo.info.director}
+                  </Text>
+                ) : null}
+
+                {/* Três Botões de Ação Horizontais (Fiel à Imagem 2) */}
+                <View style={styles.actionButtonsRow}>
+                  {/* 1. Minha Lista */}
+                  <Pressable
+                    style={styles.actionItemBtn}
+                    onPress={() => selectedSeries && handleToggleMyListSeries(selectedSeries)}
+                  >
+                    <Ionicons
+                      name={isSeriesInList ? 'checkmark-circle' : 'add'}
+                      size={24}
+                      color={isSeriesInList ? colors.primary : '#fff'}
+                    />
+                    <Text style={[styles.actionBtnLabel, isSeriesInList && { color: colors.primary }]}>
+                      {isSeriesInList ? 'Na lista' : 'Minha lista'}
+                    </Text>
+                  </Pressable>
+
+                  {/* 2. Assistir Depois */}
+                  <Pressable
+                    style={styles.actionItemBtn}
+                    onPress={() => selectedSeries && handleToggleWatchLaterSeries(selectedSeries)}
+                  >
+                    <Ionicons
+                      name={isSeriesWatchLater ? 'time' : 'time-outline'}
+                      size={24}
+                      color={isSeriesWatchLater ? colors.primary : '#fff'}
+                    />
+                    <Text style={[styles.actionBtnLabel, isSeriesWatchLater && { color: colors.primary }]}>
+                      {isSeriesWatchLater ? 'Salvo' : 'Assistir depois'}
+                    </Text>
+                  </Pressable>
+
+                  {/* 3. Favoritar / Nota */}
+                  <Pressable
+                    style={styles.actionItemBtn}
+                    onPress={() => selectedSeries && handleToggleFavoriteSeries(selectedSeries)}
+                  >
+                    <Ionicons
+                      name={
+                        selectedSeries && seriesFavorites.includes(selectedSeries.series_id)
+                          ? 'star'
+                          : 'star-outline'
+                      }
+                      size={24}
+                      color={
+                        selectedSeries && seriesFavorites.includes(selectedSeries.series_id)
+                          ? '#FFD700'
+                          : '#fff'
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.actionBtnLabel,
+                        selectedSeries &&
+                          seriesFavorites.includes(selectedSeries.series_id) && { color: '#FFD700' },
+                      ]}
+                    >
+                      {selectedSeries?.rating && String(selectedSeries.rating) !== '0'
+                        ? String(selectedSeries.rating).trim()
+                        : 'Favoritar'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {/* Abas: Episódios | Títulos Semelhantes (Fiel à Imagem 2) */}
+                <View style={styles.subTabsRow}>
+                  <Pressable
+                    style={[styles.subTabItem, seriesDetailSubTab === 'episodes' && styles.subTabItemActive]}
+                    onPress={() => setSeriesDetailSubTab('episodes')}
+                  >
+                    <Text
+                      style={[
+                        styles.subTabText,
+                        seriesDetailSubTab === 'episodes' && styles.subTabTextActive,
+                      ]}
+                    >
+                      Episódios
+                    </Text>
+                    {seriesDetailSubTab === 'episodes' && <View style={styles.activeSubTabIndicator} />}
+                  </Pressable>
+
+                  <Pressable
+                    style={[styles.subTabItem, seriesDetailSubTab === 'similar' && styles.subTabItemActive]}
+                    onPress={() => setSeriesDetailSubTab('similar')}
+                  >
+                    <Text
+                      style={[
+                        styles.subTabText,
+                        seriesDetailSubTab === 'similar' && styles.subTabTextActive,
+                      ]}
+                    >
+                      Títulos semelhantes
+                    </Text>
+                    {seriesDetailSubTab === 'similar' && <View style={styles.activeSubTabIndicator} />}
+                  </Pressable>
+                </View>
+
+                {/* Conteúdo da Aba: Episódios (Mantendo nosso estilo aprovado) */}
+                {seriesDetailSubTab === 'episodes' ? (
+                  <View style={styles.episodesTabContent}>
+                    {/* Seletor de Temporadas */}
+                    {seriesInfo?.episodes && Object.keys(seriesInfo.episodes).length > 0 ? (
+                      <>
+                        <ScrollView
+                          horizontal
+                          showsHorizontalScrollIndicator={false}
+                          contentContainerStyle={styles.seasonsScrollContent}
                         >
-                          <Text style={[styles.seasonChipText, isActive && styles.seasonChipTextActive]}>
-                            Temporada {seasonNum}
+                          {Object.keys(seriesInfo.episodes).map((seasonNum) => {
+                            const isActive = activeSeason === seasonNum;
+                            return (
+                              <FocusableItem
+                                key={seasonNum}
+                                style={[styles.seasonChip, isActive && styles.seasonChipActive]}
+                                onPress={() => setActiveSeason(seasonNum)}
+                              >
+                                <Text
+                                  style={[
+                                    styles.seasonChipText,
+                                    isActive && styles.seasonChipTextActive,
+                                  ]}
+                                >
+                                  Temporada {seasonNum}
+                                </Text>
+                              </FocusableItem>
+                            );
+                          })}
+                        </ScrollView>
+
+                        {/* Lista dos Episódios da Temporada Ativa */}
+                        <View style={styles.episodesListWrapper}>
+                          {(seriesInfo.episodes[activeSeason] || []).map((ep) => (
+                            <FocusableItem
+                              key={ep.id}
+                              style={styles.episodeCard}
+                              onPress={() =>
+                                selectedSeries && handlePlayEpisode(selectedSeries, ep, activeSeason)
+                              }
+                            >
+                              <View style={styles.episodePlayIcon}>
+                                <Ionicons name="play" size={18} color="#fff" />
+                              </View>
+                              <View style={styles.episodeDetails}>
+                                <Text style={styles.episodeTitle}>
+                                  Episódio {ep.episode_num}: {ep.title || 'Episódio'}
+                                </Text>
+                                {ep.info?.duration ? (
+                                  <Text style={styles.episodeDuration}>Duração: {ep.info.duration}</Text>
+                                ) : null}
+                              </View>
+                            </FocusableItem>
+                          ))}
+                        </View>
+                      </>
+                    ) : (
+                      <Text style={styles.emptyEpisodesText}>
+                        Nenhum episódio cadastrado nesta série.
+                      </Text>
+                    )}
+                  </View>
+                ) : (
+                  /* Conteúdo da Aba: Títulos Semelhantes (Recomendados da mesma categoria) */
+                  <View style={styles.similarSection}>
+                    <FlatList
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      data={seriesList
+                        .filter((s) => s.series_id !== selectedSeries?.series_id)
+                        .slice(0, 15)}
+                      keyExtractor={(item) => String(item.series_id)}
+                      contentContainerStyle={styles.recommendationsList}
+                      renderItem={({ item }) => (
+                        <FocusableItem
+                          style={styles.recCardItem}
+                          onPress={() => handleOpenSeries(item)}
+                        >
+                          <View style={styles.recPosterBox}>
+                            {item.cover ? (
+                              <Image
+                                source={{ uri: item.cover }}
+                                style={styles.recPoster}
+                                contentFit="cover"
+                              />
+                            ) : (
+                              <Ionicons name="albums-outline" size={24} color="#555" />
+                            )}
+                          </View>
+                          <Text style={styles.recItemTitle} numberOfLines={1}>
+                            {item.name}
                           </Text>
                         </FocusableItem>
-                      );
-                    })}
-                  </ScrollView>
-
-                  <Text style={styles.episodesHeader}>Episódios</Text>
-                  {(seriesInfo.episodes[activeSeason] || []).map((ep) => (
-                    <FocusableItem
-                      key={ep.id}
-                      style={styles.episodeCard}
-                      onPress={() => {
-                        setSelectedSeries(null);
-                        router.push({
-                          pathname: '/player/[id]',
-                          params: {
-                            id: ep.id,
-                            type: 'series',
-                            title: `${selectedSeries?.name || ''} - T${activeSeason}:E${ep.episode_num} ${ep.title || ''}`,
-                            extension: ep.container_extension || 'mp4',
-                          },
-                        });
-                      }}
-                    >
-                      <View style={styles.episodePlayIcon}>
-                        <Ionicons name="play" size={18} color="#fff" />
-                      </View>
-                      <View style={styles.episodeDetails}>
-                        <Text style={styles.episodeTitle}>
-                          Episódio {ep.episode_num}: {ep.title || 'Episódio'}
-                        </Text>
-                        {ep.info?.duration ? (
-                          <Text style={styles.episodeDuration}>Duração: {ep.info.duration}</Text>
-                        ) : null}
-                      </View>
-                    </FocusableItem>
-                  ))}
-                </>
-              ) : null}
+                      )}
+                    />
+                  </View>
+                )}
+              </View>
             </ScrollView>
           )}
+        </View>
+      </Modal>
+
+      {/* Modal PIN Parental para Séries Adultas */}
+      <Modal
+        visible={adultPinModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setAdultPinModalVisible(false);
+          setTargetAdultSeries(null);
+        }}
+      >
+        <View style={styles.pinModalBackdrop}>
+          <View style={styles.pinModalCard}>
+            <View style={styles.pinIconBox}>
+              <Ionicons name="lock-closed" size={32} color="#F5A623" />
+            </View>
+
+            <Text style={styles.pinModalTitle}>Conteúdo Protegido</Text>
+            <Text style={styles.pinModalSubtitle}>
+              Esta série é restrita. Digite seu PIN de 4 dígitos para acessar.
+            </Text>
+
+            <View style={styles.pinInputRow}>
+              <TextInput
+                style={[styles.pinTextInput, adultPinError ? styles.pinInputError : null]}
+                value={adultPinInput}
+                onChangeText={(val) => {
+                  setAdultPinError(null);
+                  if (val.length <= 4) setAdultPinInput(val.replace(/[^0-9]/g, ''));
+                }}
+                keyboardType="numeric"
+                maxLength={4}
+                secureTextEntry
+                placeholder="••••"
+                placeholderTextColor="#666"
+                autoFocus
+              />
+            </View>
+
+            {adultPinError ? <Text style={styles.pinErrorText}>{adultPinError}</Text> : null}
+            <Text style={styles.pinHintText}>PIN padrão inicial: 0000 • Altere no Menu</Text>
+
+            <View style={styles.pinActionsRow}>
+              <Pressable
+                style={styles.pinCancelBtn}
+                onPress={() => {
+                  setAdultPinModalVisible(false);
+                  setTargetAdultSeries(null);
+                }}
+              >
+                <Text style={styles.pinCancelBtnText}>Cancelar</Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.pinConfirmBtn,
+                  adultPinInput.length === 4 ? styles.pinConfirmBtnActive : null,
+                ]}
+                onPress={handleConfirmAdultSeriesPin}
+              >
+                <Text style={styles.pinConfirmBtnText}>Acessar</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       </Modal>
     </View>
@@ -684,11 +1245,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  heroWatchBtn: {
+  heroActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginTop: 12,
+    gap: 12,
+  },
+  heroWatchBtn: {
     borderRadius: 22,
     overflow: 'hidden',
     alignSelf: 'flex-start',
+  },
+  heroFavBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  cardFavBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heroWatchGradient: {
     flexDirection: 'row',
@@ -890,79 +1477,212 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
-  /* Modal de Episódios */
+  /* Modal de Abertura de Série (Fiel à Imagem 2) */
   modalContainer: {
     flex: 1,
-    backgroundColor: '#0a0a0c',
-    paddingTop: 36,
+    backgroundColor: '#070709',
   },
-  modalHeader: {
+  seriesDetailTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1c1c26',
+    paddingTop: 40,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(7,7,9,0.95)',
     gap: 12,
+    zIndex: 10,
   },
-  modalCloseBtn: {
-    padding: 4,
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#fff',
-    flex: 1,
-  },
-  modalContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  modalInfoCard: {
-    flexDirection: 'row',
-    gap: 14,
-    marginBottom: 20,
-  },
-  modalPoster: {
-    width: 110,
-    height: 160,
-    borderRadius: 12,
-  },
-  modalInfoDetails: {
-    flex: 1,
+  detailBackBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
   },
-  modalSeriesName: {
-    fontSize: 17,
-    fontWeight: '800',
+  detailTopBarTitle: {
+    flex: 1,
     color: '#fff',
-  },
-  modalPlot: {
-    fontSize: 12,
-    color: '#aaa',
-    lineHeight: 16,
-  },
-  modalGenre: {
-    fontSize: 12,
-    color: '#FFA000',
-    fontWeight: '600',
-  },
-  seasonsHeader: {
     fontSize: 16,
     fontWeight: '800',
+  },
+  detailScrollView: {
+    flex: 1,
+  },
+  detailScrollContent: {
+    paddingBottom: 60,
+  },
+  backdropWrapper: {
+    width: '100%',
+    height: 230,
+    position: 'relative',
+    backgroundColor: '#121217',
+  },
+  backdropImage: {
+    width: '100%',
+    height: '100%',
+  },
+  backdropFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backdropGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 100,
+  },
+  detailBody: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  detailSeriesTitle: {
+    fontSize: 22,
+    fontWeight: '900',
     color: '#fff',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  detailMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  detailYearText: {
+    color: '#8E8E93',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  detailMetaDot: {
+    color: '#555',
+    fontSize: 13,
+  },
+  detailMetaText: {
+    color: '#8E8E93',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  detailGenreText: {
+    color: '#8E8E93',
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+  detailWatchNowBtn: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  detailWatchGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    gap: 8,
+    borderRadius: 24,
+  },
+  detailWatchText: {
+    color: '#000',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  episodeHighlightText: {
+    color: '#CCCCCC',
+    fontSize: 13,
+    fontWeight: '700',
     marginBottom: 10,
   },
-  seasonsScroll: {
-    marginBottom: 18,
+  plotContainer: {
+    marginBottom: 14,
+  },
+  detailPlotText: {
+    color: '#CCCCCC',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  plotToggleText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  detailCreditsText: {
+    color: '#8E8E93',
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  creditsLabel: {
+    color: '#AAAAAA',
+    fontWeight: '700',
+  },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingVertical: 18,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#1a1a24',
+    marginVertical: 16,
+  },
+  actionItemBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minWidth: 80,
+  },
+  actionBtnLabel: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+
+  /* Abas: Episódios | Títulos Semelhantes (Fiel à Imagem 2) */
+  subTabsRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e1e28',
+    marginBottom: 16,
+    gap: 24,
+  },
+  subTabItem: {
+    paddingBottom: 10,
+    position: 'relative',
+  },
+  subTabItemActive: {},
+  subTabText: {
+    color: '#8E8E93',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  subTabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  activeSubTabIndicator: {
+    position: 'absolute',
+    bottom: -1,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#FF6A00',
+    borderRadius: 2,
+  },
+  episodesTabContent: {
+    marginTop: 6,
+  },
+  seasonsScrollContent: {
+    gap: 8,
+    marginBottom: 16,
   },
   seasonChip: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: '#161622',
-    marginRight: 8,
     borderWidth: 1,
     borderColor: '#262638',
   },
@@ -976,30 +1696,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   seasonChipTextActive: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  episodesHeader: {
-    fontSize: 16,
+    color: '#000',
     fontWeight: '800',
-    color: '#fff',
-    marginBottom: 10,
+  },
+  episodesListWrapper: {
+    gap: 8,
   },
   episodeCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#121218',
     padding: 12,
-    borderRadius: 12,
-    marginBottom: 8,
+    borderRadius: 14,
     gap: 12,
     borderWidth: 1,
     borderColor: '#1e1e28',
   },
   episodePlayIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1009,12 +1725,156 @@ const styles = StyleSheet.create({
   },
   episodeTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#fff',
   },
   episodeDuration: {
     fontSize: 12,
     color: '#888',
     marginTop: 2,
+  },
+  emptyEpisodesText: {
+    color: '#777',
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  similarSection: {
+    marginTop: 6,
+  },
+  recommendationsList: {
+    gap: 12,
+  },
+  recCardItem: {
+    width: 110,
+  },
+  recPosterBox: {
+    width: 110,
+    height: 165,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#16161f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#252535',
+    marginBottom: 6,
+  },
+  recPoster: {
+    width: '100%',
+    height: '100%',
+  },
+  recItemTitle: {
+    color: '#bbb',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+
+  /* Modal PIN Parental */
+  pinModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  pinModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#16161f',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#262638',
+  },
+  pinIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(245, 166, 35, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  pinModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 8,
+  },
+  pinModalSubtitle: {
+    fontSize: 13,
+    color: '#aaa',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+  },
+  pinInputRow: {
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  pinTextInput: {
+    width: 180,
+    height: 52,
+    backgroundColor: '#0c0c12',
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#333348',
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: 14,
+    textAlign: 'center',
+  },
+  pinInputError: {
+    borderColor: '#ff4444',
+  },
+  pinErrorText: {
+    color: '#ff4444',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  pinHintText: {
+    color: '#777',
+    fontSize: 11,
+    marginTop: 8,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  pinActionsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  pinCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#222230',
+    alignItems: 'center',
+  },
+  pinCancelBtnText: {
+    color: '#aaa',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pinConfirmBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#44445a',
+    alignItems: 'center',
+  },
+  pinConfirmBtnActive: {
+    backgroundColor: '#F5A623',
+  },
+  pinConfirmBtnText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

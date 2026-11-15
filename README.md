@@ -31,25 +31,51 @@ Compatível com telas sensíveis ao toque (celulares e tablets) e controles remo
 
 ### 📡 TV Ao Vivo
 - **Player Redimensionável In-Place**: O mini-player expande instantaneamente para tela cheia (*Fullscreen*) sem recarregar o stream, sem cortes de áudio e sem delay de buffer. Ao voltar, o vídeo continua reproduzindo sem pausas no topo da lista.
+- **⭐ Categoria "Canais Favoritos" Dinâmica**: Criada automaticamente no topo da lista de categorias assim que um canal é favoritado pelo usuário.
+- **🔒 Controle Parental Estrito com PIN de 4 Dígitos**: Categorias e canais adultos / XXX são rigorosamente protegidos. **Sempre que clicar na categoria ou canal adulto, solicita o PIN de 4 dígitos** (não permanece liberado permanentemente). Além disso, ao entrar em TV ao vivo, nenhum vídeo adulto inicia automaticamente. O PIN pode ser alterado a qualquer momento em Configurações (padrão inicial: `0000`).
 - **Troca Rápida de Canais**: Botões de avanço e retrocesso (`|◀` e `▶|`) para navegação sequencial sem sair da tela cheia.
 - **Gaveta Rápida de Canais**: Alterne entre canais da mesma categoria através de um menu lateral transparente durante a reprodução.
 - **Guia de Programação (EPG) Inteligente**: Decodificação automática de Base64 UTF-8 (compatível com acentuação e caracteres em português) e formatação de horários (`19:30 - 21:00`).
 - **Transmitir para TV**: Botão de pareamento Cast / Smart TV integrado.
 - **Abertura Direta**: Toque no canal da lista para abrir imediatamente em tela cheia.
 
-### 🎛️ Gestos Touch Intuitivos
-- **Controle de Brilho**: Deslize verticalmente na **metade esquerda** da tela do player para ajustar o brilho.
-- **Controle de Volume**: Deslize verticalmente na **metade direita** da tela do player para ajustar o volume nativo.
-- **Indicadores HUD**: Feedback visual na tela com ícones dinâmicos e porcentagens em tempo real.
-- **Modo Imersivo**: Ocultamento automático da barra de navegação do Android durante a reprodução.
+### 🏠 Tela Inicial (Home)
+- **Chips Reordenados**: Navegação intuitiva no topo com `[ Tudo ]`, `[ Ao vivo ]` (redirecionamento direto), `[ Séries ]` e `[ Filmes ]`.
+- **⭐ Canais Favoritos**: Listagem em carrossel horizontal de todos os canais favoritados para play instantâneo com 1 toque.
+- **🕒 Assistir Depois (Exibição Única)**: Carrossel horizontal de filmes e séries salvos para ver mais tarde, direcionando para a tela de informações completas ao tocar.
+- **▶ Continuar Assistindo**: Histórico automático com barra de progresso visual (laranja/ouro) no rodapé do pôster, direcionando para a tela de detalhes com informações antes do play.
+- **Filmes Recentes**: Carrossel com os lançamentos mais recentes retornados pelo provedor, abrindo a tela de informações detalhadas ao tocar.
+- **Streaming Brands**: Acesso rápido aos catálogos de **Netflix**, **Prime Video**, **Disney+**, **Max**, **Globoplay**, **Apple TV+** e **Paramount+** com escolha entre filmes ou séries.
 
 ### 🎬 Filmes (VOD) e Séries
-- **Navegação Moderna por Abas Horizontais**: Abas de categorias no topo com scroll suave (`Para você`, `Lançamentos`, `Ação`, etc.) com indicador ativo em âmbar/ouro.
-- **Card Hero Imersivo de Destaque**: Pôster vertical em alta definição com gradiente cinematográfico OLED, nota, ano de lançamento, sinopse e botão de reprodução direta `[ ▶ Assistir agora ]`.
-- **Carrosséis Horizontais de Conteúdo**: Seções organizadas por categoria com badge contador e botão `Ver todos >`, exibindo pôsteres em proporção 2:3 com nota e título.
-- **Destaque de Plataformas de Streaming**: Acesso rápido aos catálogos de **Netflix**, **Prime Video**, **Disney+**, **Max**, **Globoplay**, **Apple TV+** e **Paramount+**.
-- **Filtros e Busca Dedicada**: Campo de pesquisa espaçoso em largura total com limpeza em um clique e banner informativo de filtros ativos.
-- **Detalhes de Séries**: Navegação fluida por temporadas e episódios com sinopse, duração e capas em alta definição.
+- **Abertura Cinematográfica Premium (Design 16:9)**:
+  - Banner backdrop 16:9 de alta resolução com gradiente cinematográfico OLED escuro e botão voltar flutuante.
+  - Título em destaque, ano de lançamento, gênero e informações de áudio/vídeo.
+  - Botão de destaque em pílula gradiente laranja/ouro: `[ ▷ Assistir ]`.
+  - **Inclusão Automática**: Ao tocar em "Assistir" ou selecionar qualquer episódio de série, o título é adicionado automaticamente à **Minha Lista**.
+  - **3 Ações Rápidas**: `+ Minha lista` (ou `✓ Na lista`), `🕒 Assistir depois` (ou `✓ Salvo`) e `⭐ [Nota]` (Favoritar).
+  - Sinopse com expansão `Ver mais / Ver menos`, elenco e direção.
+  - **Recomendações Inteligentes**:
+    - Em Filmes: Carrossel `Você também pode gostar` com recomendados da mesma categoria.
+    - Em Séries: Abas `Episódios` e `Títulos semelhantes`.
+  - **Temporadas e Episódios**: Seletor de temporadas e lista de episódios vertical mantendo o padrão visual elegante.
+- **🔒 Proteção Parental Estrita**: Categorias e filmes/séries adultos ou XXX exigem validação do PIN de 4 dígitos sempre antes de abrir os detalhes ou reproduzir.
+
+### 📋 Gerenciador de Listas & Coleções no Menu
+- **Seção "Minhas Listas & Coleções" em Configurações**:
+  - Acesso direto e contadores em tempo real de `⭐ Meus Favoritos`, `📑 Minha Lista` e `🕒 Assistir Depois`.
+  - Modal com abas dedicadas, subfiltros para Favoritos (`Todos`, `Ao Vivo`, `Filmes`, `Séries`), play rápido e remoção instantânea.
+
+### 🔍 Tela de Busca Global Inteligente (`/search`)
+- **Acesso Rápido**: Acionada pelo ícone de busca em Filmes, Séries ou na Home.
+- **Filtros Otimizados**: Abas ordenadas por `[ Todos ]` (inicial padrão), `[ Filmes ]` e `[ Séries ]`.
+- **Contador em Tempo Real**: `Resultado da busca (X)` com atualização dinâmica.
+- **Grade Responsiva**: Pôsteres verticais em proporção 2:3 de 3 colunas (mobile) ou 5 colunas (TV/Tablet) com nota e título.
+- **Abertura Detalhada**: Ao tocar em qualquer filme ou série, abre diretamente a tela cinematográfica de informações completas com imagem 16:9, metadados, atores, sinopse expansível e botão de assistir.
+
+### ⚙️ Configurações & Perfil
+- **Alteração do PIN de Controle Parental**: Interface para alterar a senha de 4 dígitos com confirmação e validação do PIN anterior.
+- **Preferências de Reprodução**: Escolha entre stream HLS (`.m3u8`) ou MPEG-TS (`.ts`) e seleção de motor do player.
 
 ### 🧭 Navegação Imersiva e FloatingTabBar
 - **Menu em Pílula Flutuante Elevado**: Barra de navegação suspensa com margem inferior segura, garantindo que nunca fique coberta pelos gestos ou botões do sistema.
