@@ -23,20 +23,44 @@ const DEFAULT_SETTINGS: AppSettings = {
   bufferSizeMs: 5000,
 };
 
+function fixAccountProtocol(account: SavedAccount): SavedAccount {
+  if (account.serverUrl.startsWith('https://') && (account.serverUrl.includes(':80/') || account.serverUrl.endsWith(':80'))) {
+    const correctedUrl = account.serverUrl.replace('https://', 'http://');
+    return {
+      ...account,
+      serverUrl: correctedUrl,
+      id: `${account.username}@${correctedUrl}`,
+    };
+  }
+  return account;
+}
+
 export const storage = {
   // Accounts
   async getAccounts(): Promise<SavedAccount[]> {
     const json = await AsyncStorage.getItem(KEYS.ACCOUNTS);
-    return json ? JSON.parse(json) : [];
+    if (!json) return [];
+    try {
+      const list: SavedAccount[] = JSON.parse(json);
+      return list.map(fixAccountProtocol);
+    } catch {
+      return [];
+    }
+  },
+
+  async saveAccounts(accounts: SavedAccount[]): Promise<void> {
+    const sanitized = accounts.map(fixAccountProtocol);
+    await AsyncStorage.setItem(KEYS.ACCOUNTS, JSON.stringify(sanitized));
   },
 
   async saveAccount(account: SavedAccount): Promise<void> {
+    const fixed = fixAccountProtocol(account);
     const list = await this.getAccounts();
-    const index = list.findIndex((a) => a.id === account.id);
+    const index = list.findIndex((a) => a.id === fixed.id);
     if (index >= 0) {
-      list[index] = account;
+      list[index] = fixed;
     } else {
-      list.push(account);
+      list.push(fixed);
     }
     await AsyncStorage.setItem(KEYS.ACCOUNTS, JSON.stringify(list));
   },
@@ -49,14 +73,25 @@ export const storage = {
 
   async getActiveAccount(): Promise<SavedAccount | null> {
     const json = await AsyncStorage.getItem(KEYS.ACTIVE_ACCOUNT);
-    return json ? JSON.parse(json) : null;
+    if (!json) return null;
+    try {
+      const account: SavedAccount = JSON.parse(json);
+      const fixed = fixAccountProtocol(account);
+      if (fixed.serverUrl !== account.serverUrl) {
+        await AsyncStorage.setItem(KEYS.ACTIVE_ACCOUNT, JSON.stringify(fixed));
+      }
+      return fixed;
+    } catch {
+      return null;
+    }
   },
 
   async setActiveAccount(account: SavedAccount | null): Promise<void> {
     if (!account) {
       await AsyncStorage.removeItem(KEYS.ACTIVE_ACCOUNT);
     } else {
-      await AsyncStorage.setItem(KEYS.ACTIVE_ACCOUNT, JSON.stringify(account));
+      const fixed = fixAccountProtocol(account);
+      await AsyncStorage.setItem(KEYS.ACTIVE_ACCOUNT, JSON.stringify(fixed));
     }
   },
 
@@ -66,36 +101,35 @@ export const storage = {
     return json ? JSON.parse(json) : [];
   },
 
-  async toggleFavorite(streamId: number): Promise<boolean> {
+  async toggleFavorite(streamId: number): Promise<number[]> {
     const favs = await this.getFavorites();
-    let isFav = false;
+    const index = favs.indexOf(streamId);
     let updated: number[];
-    if (favs.includes(streamId)) {
+    if (index >= 0) {
       updated = favs.filter((id) => id !== streamId);
-      isFav = false;
     } else {
       updated = [...favs, streamId];
-      isFav = true;
     }
     await AsyncStorage.setItem(KEYS.FAVORITES, JSON.stringify(updated));
-    return isFav;
+    return updated;
   },
 
-  // Watch Progress
-  async getWatchProgress(streamId: string | number): Promise<number> {
+  // Watch Progress (VOD)
+  async saveWatchProgress(id: number | string, positionSec: number, durationSec: number): Promise<void> {
     const json = await AsyncStorage.getItem(KEYS.WATCH_PROGRESS);
-    const map = json ? JSON.parse(json) : {};
-    return map[streamId] || 0;
+    const progress = json ? JSON.parse(json) : {};
+    progress[id] = { positionSec, durationSec, timestamp: Date.now() };
+    await AsyncStorage.setItem(KEYS.WATCH_PROGRESS, JSON.stringify(progress));
   },
 
-  async saveWatchProgress(streamId: string | number, positionSec: number): Promise<void> {
+  async getWatchProgress(id: number | string): Promise<{ positionSec: number; durationSec: number } | null> {
     const json = await AsyncStorage.getItem(KEYS.WATCH_PROGRESS);
-    const map = json ? JSON.parse(json) : {};
-    map[streamId] = positionSec;
-    await AsyncStorage.setItem(KEYS.WATCH_PROGRESS, JSON.stringify(map));
+    if (!json) return null;
+    const progress = JSON.parse(json);
+    return progress[id] || null;
   },
 
-  // Settings
+  // App Settings
   async getSettings(): Promise<AppSettings> {
     const json = await AsyncStorage.getItem(KEYS.SETTINGS);
     return json ? { ...DEFAULT_SETTINGS, ...JSON.parse(json) } : DEFAULT_SETTINGS;

@@ -31,6 +31,7 @@ export default function MoviesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingMovies, setLoadingMovies] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [account, setAccount] = useState<SavedAccount | null>(null);
 
   useEffect(() => {
@@ -38,6 +39,8 @@ export default function MoviesScreen() {
   }, [params.brand]);
 
   const initMovies = async () => {
+    setLoading(true);
+    setErrorMessage(null);
     try {
       const active = await storage.getActiveAccount();
       if (!active) {
@@ -64,10 +67,18 @@ export default function MoviesScreen() {
         }
       }
 
-      const vods = await client.getVodStreams();
-      setMovies(vods || []);
-    } catch (err) {
+      if (cats && cats.length > 0) {
+        const firstCatId = cats[0].category_id;
+        setSelectedCategory(firstCatId);
+        const vods = await client.getVodStreams(firstCatId);
+        setMovies(vods || []);
+      } else {
+        const vods = await client.getVodStreams();
+        setMovies(vods || []);
+      }
+    } catch (err: any) {
       console.warn('Error loading movies:', err);
+      setErrorMessage(err?.message || 'Falha ao carregar catálogo de filmes.');
     } finally {
       setLoading(false);
     }

@@ -13,6 +13,7 @@ import {
   Modal,
   Alert,
   FlatList,
+  RefreshControl,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Image } from 'expo-image';
@@ -39,6 +40,8 @@ export default function LiveScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingCategory, setLoadingCategory] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<number[]>([]);
   const [account, setAccount] = useState<SavedAccount | null>(null);
 
@@ -151,7 +154,14 @@ export default function LiveScreen() {
     } catch (e) {}
   };
 
-  const initLive = async () => {
+  const initLive = async (isRefresh: boolean = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setErrorMessage(null);
+
     try {
       const active = await storage.getActiveAccount();
       if (!active) {
@@ -175,11 +185,15 @@ export default function LiveScreen() {
         if (chs && chs.length > 0) {
           selectChannelForPlayer(chs[0], active);
         }
+      } else {
+        setErrorMessage('Nenhuma categoria de canais foi retornada pelo servidor IPTV.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Error loading live screen:', err);
+      setErrorMessage(err?.message || 'Falha ao conectar com o servidor IPTV.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -431,7 +445,18 @@ export default function LiveScreen() {
 
       {/* Accordion Categories List (Hidden when in Fullscreen) */}
       {!isFullscreen && (
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => initLive(true)}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+        >
           {/* Mini Player Section on Top */}
           {activeChannel ? (
             <View style={styles.miniPlayerContainer}>
@@ -489,6 +514,36 @@ export default function LiveScreen() {
             <View style={styles.centerBox}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={styles.loadingText}>Carregando categorias...</Text>
+            </View>
+          ) : errorMessage && categories.length === 0 ? (
+            <View style={styles.emptyLiveCard}>
+              <Ionicons name="alert-circle-outline" size={48} color={colors.warning} />
+              <Text style={styles.emptyLiveTitle}>Erro ao carregar canais</Text>
+              <Text style={styles.emptyLiveDesc}>{errorMessage}</Text>
+
+              <View style={styles.emptyLiveActions}>
+                <FocusableItem style={styles.retryLiveBtn} onPress={() => initLive(true)}>
+                  <Ionicons name="refresh" size={16} color="#fff" />
+                  <Text style={styles.retryLiveBtnText}>Tentar Novamente</Text>
+                </FocusableItem>
+
+                <FocusableItem style={styles.changeAccountLiveBtn} onPress={() => router.push('/login')}>
+                  <Ionicons name="log-in-outline" size={16} color="#fff" />
+                  <Text style={styles.changeAccountLiveBtnText}>Trocar / Reconfigurar Conta</Text>
+                </FocusableItem>
+              </View>
+            </View>
+          ) : filteredCategories.length === 0 ? (
+            <View style={styles.emptyLiveCard}>
+              <Ionicons name="tv-outline" size={48} color={colors.textMuted} />
+              <Text style={styles.emptyLiveTitle}>Nenhum canal encontrado</Text>
+              <Text style={styles.emptyLiveDesc}>
+                {searchQuery ? 'Nenhum canal corresponde à sua busca.' : 'O servidor não retornou categorias de canais.'}
+              </Text>
+              <FocusableItem style={styles.retryLiveBtn} onPress={() => initLive(true)}>
+                <Ionicons name="refresh" size={16} color="#fff" />
+                <Text style={styles.retryLiveBtnText}>Atualizar Lista</Text>
+              </FocusableItem>
             </View>
           ) : (
             <View style={styles.accordionContainer}>
@@ -1357,5 +1412,66 @@ const styles = StyleSheet.create({
   epgDesc: {
     color: '#888',
     fontSize: 12,
+  },
+
+  /* Empty Live / Error styles */
+  emptyLiveCard: {
+    backgroundColor: '#121217',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#242432',
+    padding: 28,
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginVertical: 24,
+  },
+  emptyLiveTitle: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  emptyLiveDesc: {
+    color: '#aaa',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  emptyLiveActions: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  retryLiveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 8,
+  },
+  retryLiveBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  changeAccountLiveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#20202c',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 8,
+  },
+  changeAccountLiveBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

@@ -14,15 +14,48 @@ import { colors } from '../../src/theme/colors';
 import { storage, AppSettings } from '../../src/services/storage';
 import { SavedAccount } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
+import {
+  checkStoragePermissions,
+  requestStoragePermissions,
+  checkNetworkConnectivity,
+  openAppSettings,
+} from '../../src/services/permissions';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const [account, setAccount] = useState<SavedAccount | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [storageGranted, setStorageGranted] = useState<boolean>(true);
+  const [networkConnected, setNetworkConnected] = useState<boolean>(true);
 
   useEffect(() => {
     loadSettings();
+    checkPermissionsStatus();
   }, []);
+
+  const checkPermissionsStatus = async () => {
+    const storageOk = await checkStoragePermissions();
+    setStorageGranted(storageOk);
+    const netOk = await checkNetworkConnectivity();
+    setNetworkConnected(netOk);
+  };
+
+  const handleRequestStorage = async () => {
+    const granted = await requestStoragePermissions();
+    setStorageGranted(granted);
+    if (granted) {
+      Alert.alert('Permissão Concedida', 'O acesso ao armazenamento local foi autorizado com sucesso!');
+    } else {
+      Alert.alert(
+        'Permissão Necessária',
+        'O acesso ao armazenamento foi negado. Deseja abrir as configurações do aparelho para conceder manualmente?',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Abrir Configurações', onPress: openAppSettings },
+        ]
+      );
+    }
+  };
 
   const loadSettings = async () => {
     const active = await storage.getActiveAccount();
@@ -158,6 +191,60 @@ export default function SettingsScreen() {
             <Text style={styles.settingSub}>Libera memória no aparelho e força atualização</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </FocusableItem>
+      </View>
+
+      {/* Permissions Section */}
+      <Text style={styles.sectionTitle}>Permissões do Sistema</Text>
+      <View style={styles.card}>
+        {/* Storage Permission */}
+        <FocusableItem style={styles.settingRow} onPress={handleRequestStorage}>
+          <View style={styles.settingIcon}>
+            <Ionicons
+              name={storageGranted ? 'folder-open-outline' : 'alert-circle-outline'}
+              size={20}
+              color={storageGranted ? colors.success : colors.warning}
+            />
+          </View>
+          <View style={styles.settingDetails}>
+            <Text style={styles.settingTitle}>Acesso ao Armazenamento</Text>
+            <Text style={styles.settingSub}>
+              {storageGranted
+                ? 'Concedido • Arquivos locais e cache liberados'
+                : 'Não concedido • Toque para solicitar permissão'}
+            </Text>
+          </View>
+          <Ionicons
+            name={storageGranted ? 'checkmark-circle' : 'chevron-forward'}
+            size={18}
+            color={storageGranted ? colors.success : colors.textMuted}
+          />
+        </FocusableItem>
+
+        <View style={styles.divider} />
+
+        {/* Network Status */}
+        <FocusableItem style={styles.settingRow} onPress={checkPermissionsStatus}>
+          <View style={styles.settingIcon}>
+            <Ionicons
+              name={networkConnected ? 'wifi-outline' : 'cloud-offline-outline'}
+              size={20}
+              color={networkConnected ? colors.primary : colors.error}
+            />
+          </View>
+          <View style={styles.settingDetails}>
+            <Text style={styles.settingTitle}>Acesso à Rede & Internet</Text>
+            <Text style={styles.settingSub}>
+              {networkConnected
+                ? 'Conectado • Tráfego HTTP e HTTPS liberado'
+                : 'Sem conexão ativa detectada • Toque para testar'}
+            </Text>
+          </View>
+          <Ionicons
+            name={networkConnected ? 'checkmark-circle' : 'refresh-outline'}
+            size={18}
+            color={networkConnected ? colors.success : colors.textMuted}
+          />
         </FocusableItem>
       </View>
 

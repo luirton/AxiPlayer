@@ -20,8 +20,19 @@ export class XtreamClient {
     this.password = password?.trim();
   }
 
+  public getServerUrl(): string {
+    return this.serverUrl;
+  }
+
   private normalizeUrl(url: string): string {
     let clean = url.trim();
+
+    // Porta 80 é exclusivamente HTTP (não suporta TLS/SSL).
+    // O erro "SSLException: Unable to parse TLS packet header" ocorre quando tenta-se https:// na porta 80.
+    if (clean.startsWith('https://') && (clean.includes(':80/') || clean.endsWith(':80'))) {
+      clean = clean.replace('https://', 'http://');
+    }
+
     if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
       clean = 'http://' + clean;
     }
@@ -34,82 +45,151 @@ export class XtreamClient {
     return `${this.serverUrl}/player_api.php?username=${encodedUser}&password=${encodedPass}`;
   }
 
+  /**
+   * Executa requisições HTTP com User-Agent compatível com IPTV Smarters,
+   * timeout controlado e fallback automático de SSL/TLS (https <-> http).
+   */
+  private async fetchJson<T>(url: string, timeoutMs: number = 20000): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    const headers: Record<string, string> = {
+      'User-Agent': 'IPTVSmartersPro/1.0.0 (Linux; Android; Mobile; Exoplayer)',
+      'Accept': '*/*',
+      'Cache-Control': 'no-cache',
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Acesso negado pelo servidor (403/401). Verifique usuário, senha ou validade da lista.');
+        }
+        if (response.status === 404) {
+          throw new Error('Ponto de API não encontrado (404). Verifique o DNS/URL do servidor.');
+        }
+        throw new Error(`Servidor retornou erro HTTP ${response.status} (${response.statusText || 'Erro no servidor'})`);
+      }
+
+      const text = await response.text();
+      if (!text || text.trim() === '') {
+        return [] as unknown as T;
+      }
+
+      try {
+        return JSON.parse(text) as T;
+      } catch (parseErr) {
+        if (text.includes('<html') || text.includes('<!DOCTYPE') || text.includes('<head')) {
+          throw new Error('O servidor respondeu com uma página web (HTML) em vez de dados JSON. Verifique a URL e porta do provedor.');
+        }
+        throw new Error(`Dados inválidos recebidos do provedor IPTV: ${text.slice(0, 100)}...`);
+      }
+    } catch (err: any) {
+      clearTimeout(timer);
+
+      // Fallback Inteligente de Protocolo:
+      // Se deu erro de SSL/TLS ("Unable to parse TLS packet header" ou SSLException)
+      const isSslError =
+        err?.message?.includes('SSL') ||
+        err?.message?.includes('TLS') ||
+        err?.message?.includes('packet header') ||
+        err?.message?.includes('handshake');
+
+      if (isSslError && url.startsWith('https://')) {
+        const httpUrl = url.replace('https://', 'http://');
+        console.warn(`[XtreamClient] Fallback de SSL detectado. Tentando via HTTP: ${httpUrl}`);
+        this.serverUrl = this.serverUrl.replace('https://', 'http://');
+        return this.fetchJson<T>(httpUrl, timeoutMs);
+      }
+
+      if (err.name === 'AbortError') {
+        throw new Error('Tempo limite de conexão esgotado (Timeout). O servidor IPTV demorou muito para responder.');
+      }
+      throw err;
+    }
+  }
+
   public async authenticate(): Promise<XtreamAuthResponse> {
     const url = this.getBaseApiUrl();
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Falha na conexão com o servidor (${response.status})`);
+    const data = await this.fetchJson<any>(url, 15000);
+
+    if (!data || typeof data !== 'object') {
+      throw new Error('Resposta de autenticação vazia ou inválida.');
     }
-    const data = await response.json();
+
     if (!data.user_info || data.user_info.auth === 0 || data.user_info.status !== 'Active') {
-      const msg = data.user_info?.message || 'Usuário ou senha inválidos ou conta inativa.';
+      const msg = data.user_info?.message || 'Usuário ou senha inválidos ou conta inativa/expirada.';
       throw new Error(msg);
     }
-    return data;
+    return data as XtreamAuthResponse;
   }
 
   public async getLiveCategories(): Promise<IptvCategory[]> {
     const url = `${this.getBaseApiUrl()}&action=get_live_categories`;
-    const res = await fetch(url);
-    return res.json();
+    const res = await this.fetchJson<any>(url);
+    return Array.isArray(res) ? res : [];
   }
 
   public async getLiveStreams(categoryId?: string): Promise<LiveChannel[]> {
     let url = `${this.getBaseApiUrl()}&action=get_live_streams`;
     if (categoryId && categoryId !== 'all') {
-      url += `&category_id=${categoryId}`;
+      url += `&category_id=${encodeURIComponent(categoryId)}`;
     }
-    const res = await fetch(url);
-    return res.json();
+    const res = await this.fetchJson<any>(url);
+    return Array.isArray(res) ? res : [];
   }
 
   public async getVodCategories(): Promise<IptvCategory[]> {
     const url = `${this.getBaseApiUrl()}&action=get_vod_categories`;
-    const res = await fetch(url);
-    return res.json();
+    const res = await this.fetchJson<any>(url);
+    return Array.isArray(res) ? res : [];
   }
 
   public async getVodStreams(categoryId?: string): Promise<VodMovie[]> {
     let url = `${this.getBaseApiUrl()}&action=get_vod_streams`;
     if (categoryId && categoryId !== 'all') {
-      url += `&category_id=${categoryId}`;
+      url += `&category_id=${encodeURIComponent(categoryId)}`;
     }
-    const res = await fetch(url);
-    return res.json();
+    const res = await this.fetchJson<any>(url);
+    return Array.isArray(res) ? res : [];
   }
 
   public async getVodInfo(vodId: number): Promise<any> {
     const url = `${this.getBaseApiUrl()}&action=get_vod_info&vod_id=${vodId}`;
-    const res = await fetch(url);
-    return res.json();
+    return this.fetchJson<any>(url);
   }
 
   public async getSeriesCategories(): Promise<IptvCategory[]> {
     const url = `${this.getBaseApiUrl()}&action=get_series_categories`;
-    const res = await fetch(url);
-    return res.json();
+    const res = await this.fetchJson<any>(url);
+    return Array.isArray(res) ? res : [];
   }
 
   public async getSeries(categoryId?: string): Promise<SeriesItem[]> {
     let url = `${this.getBaseApiUrl()}&action=get_series`;
     if (categoryId && categoryId !== 'all') {
-      url += `&category_id=${categoryId}`;
+      url += `&category_id=${encodeURIComponent(categoryId)}`;
     }
-    const res = await fetch(url);
-    return res.json();
+    const res = await this.fetchJson<any>(url);
+    return Array.isArray(res) ? res : [];
   }
 
   public async getSeriesInfo(seriesId: number): Promise<SeriesInfoResponse> {
     const url = `${this.getBaseApiUrl()}&action=get_series_info&series_id=${seriesId}`;
-    const res = await fetch(url);
-    return res.json();
+    return this.fetchJson<SeriesInfoResponse>(url);
   }
 
   public async getShortEpg(streamId: number): Promise<EpgProgram[]> {
     try {
       const url = `${this.getBaseApiUrl()}&action=get_short_epg&stream_id=${streamId}&limit=10`;
-      const res = await fetch(url);
-      const data = await res.json();
+      const data = await this.fetchJson<any>(url, 8000);
       const listings = data?.epg_listings || [];
       return listings.map((item: any) => parseRawEpgItem(item));
     } catch (e) {

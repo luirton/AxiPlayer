@@ -8,6 +8,17 @@ export interface ParsedIptvLink {
 }
 
 /**
+ * Corrige o protocolo para evitar erro SSLException quando a porta for 80 ou HTTP padrão.
+ */
+function sanitizeServerProtocol(url: string): string {
+  let clean = url.trim();
+  if (clean.startsWith('https://') && (clean.includes(':80/') || clean.endsWith(':80'))) {
+    clean = clean.replace('https://', 'http://');
+  }
+  return clean.replace(/\/+$/, '');
+}
+
+/**
  * Analisa e extrai credenciais de URLs de IPTV (M3U Completo, Links Curtos, HLS, SSIPTV, etc.)
  * 
  * Exemplos suportados:
@@ -44,7 +55,7 @@ export function parseIptvLink(rawUrl: string): ParsedIptvLink {
 
       // Extrai a base do servidor (protocolo + host + porta)
       const serverMatch = formatted.match(/^(https?:\/\/[^\/?#]+)/i);
-      const serverUrl = serverMatch ? serverMatch[1] : '';
+      const serverUrl = serverMatch ? sanitizeServerProtocol(serverMatch[1]) : '';
 
       let type: 'm3u' | 'hls' | 'ssiptv' | 'generic' = 'm3u';
       if (/output=hls/i.test(formatted) || /type=m3u_hls/i.test(formatted)) {
@@ -64,7 +75,7 @@ export function parseIptvLink(rawUrl: string): ParsedIptvLink {
     // 2. Extração por Links Curtos (ex: /p/usuario/senha/m3u ou /p/usuario/senha/hls ou /p/usuario/senha/ssiptv)
     const shortLinkMatch = formatted.match(/^(https?:\/\/[^\/]+)\/p\/([^\/]+)\/([^\/]+)(?:\/(m3u|hls|ssiptv))?/i);
     if (shortLinkMatch) {
-      const serverUrl = shortLinkMatch[1];
+      const serverUrl = sanitizeServerProtocol(shortLinkMatch[1]);
       const username = decodeURIComponent(shortLinkMatch[2]);
       const password = decodeURIComponent(shortLinkMatch[3]);
       const formatType = (shortLinkMatch[4] || 'm3u').toLowerCase() as 'm3u' | 'hls' | 'ssiptv';
@@ -82,7 +93,7 @@ export function parseIptvLink(rawUrl: string): ParsedIptvLink {
     // 3. Extração por Stream Paths (ex: /live/usuario/senha/..., /movie/usuario/senha/...)
     const streamPathMatch = formatted.match(/^(https?:\/\/[^\/]+)\/(?:live|movie|series|playlist)\/([^\/]+)\/([^\/]+)/i);
     if (streamPathMatch) {
-      const serverUrl = streamPathMatch[1];
+      const serverUrl = sanitizeServerProtocol(streamPathMatch[1]);
       const username = decodeURIComponent(streamPathMatch[2]);
       const password = decodeURIComponent(streamPathMatch[3]);
 
@@ -99,7 +110,7 @@ export function parseIptvLink(rawUrl: string): ParsedIptvLink {
     // 4. Link M3U genérico (sem credenciais explícitas na URL)
     const baseMatch = formatted.match(/^(https?:\/\/[^\/?#]+)/i);
     return {
-      serverUrl: baseMatch ? baseMatch[1] : formatted,
+      serverUrl: baseMatch ? sanitizeServerProtocol(baseMatch[1]) : formatted,
       isXtreamCompatible: false,
       type: 'generic',
       originalUrl,

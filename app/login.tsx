@@ -21,6 +21,7 @@ import { storage } from '../src/services/storage';
 import { SavedAccount } from '../src/types/iptv';
 import { FocusableItem } from '../src/components/common/FocusableItem';
 import { parseIptvLink, ParsedIptvLink } from '../src/services/linkParser';
+import { fetchAndParseM3u } from '../src/services/m3uParser';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -62,14 +63,19 @@ export default function LoginScreen() {
 
   // Auto-fill in manual tab if user pastes a full link in serverUrl field
   const handleServerUrlChange = (text: string) => {
-    if (text.includes('get.php') || text.includes('/p/') || text.includes('username=')) {
-      const parsed = parseIptvLink(text);
+    let clean = text.trim();
+    if (clean.includes('get.php') || clean.includes('/p/') || clean.includes('username=')) {
+      const parsed = parseIptvLink(clean);
       if (parsed.serverUrl) setServerUrl(parsed.serverUrl);
       if (parsed.username) setUsername(parsed.username);
       if (parsed.password) setPassword(parsed.password);
       return;
     }
-    setServerUrl(text);
+    // Converte automaticamente caso usuário digite https na porta 80
+    if (clean.startsWith('https://') && (clean.includes(':80/') || clean.endsWith(':80'))) {
+      clean = clean.replace('https://', 'http://');
+    }
+    setServerUrl(clean);
   };
 
   const handleLinkLogin = async () => {
@@ -82,9 +88,12 @@ export default function LoginScreen() {
     setLoading(true);
 
     try {
-      // If we identified Xtream username and password from the link
+      // 1. Se identificamos credenciais Xtream no link
       if (parsed.username && parsed.password && parsed.serverUrl) {
-        // Attempt 1: Authenticate with extracted Xtream credentials
+        let authSuccess = false;
+        let lastErrorMsg = '';
+
+        // Tentativa A: URL original extraída
         try {
           const client = new XtreamClient(parsed.serverUrl, parsed.username, parsed.password);
           const auth = await client.authenticate();
@@ -101,15 +110,74 @@ export default function LoginScreen() {
 
           await storage.saveAccount(account);
           await storage.setActiveAccount(account);
+          authSuccess = true;
           router.replace('/(tabs)');
           return;
-        } catch (apiErr) {
-          // If serverUrl had a subdomain or port difference, try port 80 or default host
-          console.warn('Direct API attempt failed, trying fallback:', apiErr);
+        } catch (apiErr: any) {
+          lastErrorMsg = apiErr?.message || '';
+          console.warn('Tentativa 1 com URL original falhou:', apiErr);
+        }
+
+        // Tentativa B: Fallback removendo ou ajustando porta comum (ex: :80 ou sem porta)
+        if (!authSuccess && parsed.serverUrl.includes(':80')) {
+          try {
+            const altServer = parsed.serverUrl.replace(':80', '');
+            const clientAlt = new XtreamClient(altServer, parsed.username, parsed.password);
+            const authAlt = await clientAlt.authenticate();
+
+            const account: SavedAccount = {
+              id: `${parsed.username}@${altServer}`,
+              name: profileName || authAlt.user_info.username || 'Minha Lista',
+              serverUrl: altServer,
+              username: parsed.username,
+              password: parsed.password,
+              createdAt: Date.now(),
+              lastLogin: Date.now(),
+            };
+
+            await storage.saveAccount(account);
+            await storage.setActiveAccount(account);
+            authSuccess = true;
+            router.replace('/(tabs)');
+            return;
+          } catch (altErr: any) {
+            lastErrorMsg = altErr?.message || lastErrorMsg;
+          }
+        }
+
+        // Tentativa C: Testar download direto do link M3U caso a API Xtream esteja bloqueada no provedor
+        if (!authSuccess) {
+          try {
+            const m3uResult = await fetchAndParseM3u(linkInput.trim(), 15000);
+            if (m3uResult.channels.length > 0) {
+              const account: SavedAccount = {
+                id: `${parsed.username}@${parsed.serverUrl}`,
+                name: profileName || 'Lista M3U',
+                serverUrl: parsed.serverUrl,
+                username: parsed.username,
+                password: parsed.password,
+                createdAt: Date.now(),
+                lastLogin: Date.now(),
+              };
+              await storage.saveAccount(account);
+              await storage.setActiveAccount(account);
+              router.replace('/(tabs)');
+              return;
+            }
+          } catch (m3uErr) {
+            console.warn('Tentativa M3U direto também falhou:', m3uErr);
+          }
+
+          throw new Error(lastErrorMsg || 'Não foi possível validar o link com o servidor IPTV.');
         }
       }
 
-      // Fallback: Save account with link data
+      // 2. Link M3U genérico (sem parâmetros explícitos de usuário/senha na URL)
+      const m3uDirect = await fetchAndParseM3u(linkInput.trim(), 20000);
+      if (m3uDirect.channels.length === 0) {
+        throw new Error('Nenhum canal foi encontrado no link da lista fornecido.');
+      }
+
       const accUsername = parsed.username || 'usuario_m3u';
       const accPassword = parsed.password || '';
       const accServer = parsed.serverUrl || linkInput.trim();
@@ -128,7 +196,11 @@ export default function LoginScreen() {
       await storage.setActiveAccount(account);
       router.replace('/(tabs)');
     } catch (err: any) {
-      Alert.alert('Erro ao conectar', err.message || 'Verifique o link e tente novamente.');
+      Alert.alert(
+        'Falha ao conectar lista',
+        (err?.message || 'Verifique se o link está correto, ativo e com conexão à internet.') +
+          '\n\nDica: Se a sua lista usa usuário e senha, você também pode usar a aba "Dados Xtream" acima.'
+      );
     } finally {
       setLoading(false);
     }
@@ -142,13 +214,32 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      const client = new XtreamClient(serverUrl, username, password);
-      const auth = await client.authenticate();
+      let cleanUrl = serverUrl.trim();
+      if (cleanUrl.startsWith('https://') && (cleanUrl.includes(':80/') || cleanUrl.endsWith(':80'))) {
+        cleanUrl = cleanUrl.replace('https://', 'http://');
+      }
 
+      let client = new XtreamClient(cleanUrl, username, password);
+      let auth;
+
+      try {
+        auth = await client.authenticate();
+      } catch (firstErr: any) {
+        // Se tiver :80, tenta sem a porta
+        if (cleanUrl.includes(':80')) {
+          const altServer = cleanUrl.replace(':80', '');
+          client = new XtreamClient(altServer, username, password);
+          auth = await client.authenticate();
+        } else {
+          throw firstErr;
+        }
+      }
+
+      const finalServerUrl = client.getServerUrl();
       const account: SavedAccount = {
-        id: `${username}@${serverUrl}`,
+        id: `${username}@${finalServerUrl}`,
         name: profileName || auth.user_info.username || 'Minha Lista',
-        serverUrl,
+        serverUrl: finalServerUrl,
         username,
         password,
         createdAt: Date.now(),
@@ -160,7 +251,11 @@ export default function LoginScreen() {
 
       router.replace('/(tabs)');
     } catch (err: any) {
-      Alert.alert('Erro ao conectar', err.message || 'Verifique os dados de acesso e a conexão com a internet.');
+      Alert.alert(
+        'Erro ao conectar',
+        (err?.message || 'Verifique os dados de acesso e a conexão com a internet.') +
+          '\n\nCertifique-se de que a URL inclui http:// e a porta correta fornecida pelo seu provedor.'
+      );
     } finally {
       setLoading(false);
     }
@@ -169,7 +264,17 @@ export default function LoginScreen() {
   const handleSelectSavedAccount = async (account: SavedAccount) => {
     setLoading(true);
     try {
-      await storage.setActiveAccount(account);
+      let fixedServer = account.serverUrl;
+      if (fixedServer.startsWith('https://') && (fixedServer.includes(':80/') || fixedServer.endsWith(':80'))) {
+        fixedServer = fixedServer.replace('https://', 'http://');
+      }
+      const fixedAccount = {
+        ...account,
+        serverUrl: fixedServer,
+        id: `${account.username}@${fixedServer}`,
+      };
+      await storage.saveAccount(fixedAccount);
+      await storage.setActiveAccount(fixedAccount);
       router.replace('/(tabs)');
     } catch (err: any) {
       Alert.alert('Erro', 'Não foi possível carregar a conta selecionada.');

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Pressable,
   FlatList,
   Modal,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
@@ -31,6 +32,8 @@ export default function HomeScreen() {
   const [todayChannels, setTodayChannels] = useState<LiveChannel[]>([]);
   const [recentMovies, setRecentMovies] = useState<VodMovie[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Streaming Brand Selection Modal
   const [selectedBrand, setSelectedBrand] = useState<StreamingBrand | null>(null);
@@ -40,7 +43,14 @@ export default function HomeScreen() {
     loadHomeData();
   }, []);
 
-  const loadHomeData = async () => {
+  const loadHomeData = async (isRefresh: boolean = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setErrorMessage(null);
+
     try {
       const active = await storage.getActiveAccount();
       if (!active) {
@@ -50,23 +60,46 @@ export default function HomeScreen() {
       setAccount(active);
 
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
-      
-      // Load movies for Hero and Carousel
-      const movies = await client.getVodStreams();
-      if (movies && movies.length > 0) {
-        setHeroItem(movies[0]);
-        setRecentMovies(movies.slice(1, 15));
+
+      // Usar Promise.allSettled para que a falha de um não impeça o outro
+      const [channelsRes, moviesRes] = await Promise.allSettled([
+        client.getLiveStreams(),
+        client.getVodStreams(),
+      ]);
+
+      let hasAnySuccess = false;
+
+      if (channelsRes.status === 'fulfilled' && Array.isArray(channelsRes.value) && channelsRes.value.length > 0) {
+        setTodayChannels(channelsRes.value.slice(0, 15));
+        hasAnySuccess = true;
       }
 
-      // Load channels
-      const channels = await client.getLiveStreams();
-      if (channels && channels.length > 0) {
-        setTodayChannels(channels.slice(0, 15));
+      if (moviesRes.status === 'fulfilled' && Array.isArray(moviesRes.value) && moviesRes.value.length > 0) {
+        setHeroItem(moviesRes.value[0]);
+        setRecentMovies(moviesRes.value.slice(1, 15));
+        hasAnySuccess = true;
       }
-    } catch (err) {
+
+      if (!hasAnySuccess) {
+        const errorDetail =
+          channelsRes.status === 'rejected'
+            ? channelsRes.reason?.message
+            : moviesRes.status === 'rejected'
+            ? moviesRes.reason?.message
+            : null;
+
+        if (errorDetail) {
+          setErrorMessage(errorDetail);
+        } else {
+          setErrorMessage('Nenhum canal ou filme foi retornado pelo servidor IPTV.');
+        }
+      }
+    } catch (err: any) {
       console.warn('Could not load home data:', err);
+      setErrorMessage(err?.message || 'Erro de conexão com o servidor IPTV.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -170,11 +203,63 @@ export default function HomeScreen() {
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Carregando destaques...</Text>
         </View>
+      ) : errorMessage && !heroItem && todayChannels.length === 0 ? (
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.emptyContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadHomeData(true)}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+        >
+          <View style={styles.emptyCard}>
+            <Ionicons name="cloud-offline-outline" size={56} color={colors.warning} />
+            <Text style={styles.emptyTitle}>Não foi possível carregar a lista</Text>
+            <Text style={styles.emptyDesc}>{errorMessage}</Text>
+            
+            <View style={styles.emptyActionsRow}>
+              <FocusableItem
+                style={styles.retryButton}
+                onPress={() => loadHomeData(true)}
+              >
+                <Ionicons name="refresh" size={18} color="#fff" />
+                <Text style={styles.retryButtonText}>Tentar Novamente</Text>
+              </FocusableItem>
+
+              <FocusableItem
+                style={styles.secondaryButton}
+                onPress={() => router.push('/(tabs)/live')}
+              >
+                <Ionicons name="tv-outline" size={18} color="#fff" />
+                <Text style={styles.secondaryButtonText}>Ir para TV Ao Vivo</Text>
+              </FocusableItem>
+            </View>
+
+            <FocusableItem
+              style={styles.changeAccountLink}
+              onPress={() => router.push('/login')}
+            >
+              <Text style={styles.changeAccountText}>Trocar ou reconfigurar dados da conta</Text>
+            </FocusableItem>
+          </View>
+        </ScrollView>
       ) : (
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadHomeData(true)}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
         >
           {/* Main Hero Banner - Image 3 Style */}
           {heroItem ? (
@@ -652,5 +737,82 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
     fontWeight: '600',
+  },
+
+  /* Empty / Error state styles */
+  emptyContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  emptyCard: {
+    backgroundColor: '#121217',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#242432',
+    padding: 28,
+    alignItems: 'center',
+    maxWidth: 480,
+    width: '100%',
+  },
+  emptyTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  emptyDesc: {
+    color: '#aaa',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 24,
+    lineHeight: 18,
+  },
+  emptyActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#20202c',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 12,
+    gap: 8,
+  },
+  secondaryButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  changeAccountLink: {
+    marginTop: 20,
+    padding: 8,
+  },
+  changeAccountText: {
+    color: colors.primaryAmber,
+    fontSize: 13,
+    textDecorationLine: 'underline',
   },
 });

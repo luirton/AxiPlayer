@@ -33,6 +33,7 @@ export default function SeriesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingSeries, setLoadingSeries] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [account, setAccount] = useState<SavedAccount | null>(null);
 
   // Detail Modal state
@@ -46,6 +47,8 @@ export default function SeriesScreen() {
   }, [params.brand]);
 
   const initSeries = async () => {
+    setLoading(true);
+    setErrorMessage(null);
     try {
       const active = await storage.getActiveAccount();
       if (!active) {
@@ -72,10 +75,18 @@ export default function SeriesScreen() {
         }
       }
 
-      const s = await client.getSeries();
-      setSeriesList(s || []);
-    } catch (err) {
+      if (cats && cats.length > 0) {
+        const firstCatId = cats[0].category_id;
+        setSelectedCategory(firstCatId);
+        const s = await client.getSeries(firstCatId);
+        setSeriesList(s || []);
+      } else {
+        const s = await client.getSeries();
+        setSeriesList(s || []);
+      }
+    } catch (err: any) {
       console.warn('Error loading series:', err);
+      setErrorMessage(err?.message || 'Falha ao carregar catálogo de séries.');
     } finally {
       setLoading(false);
     }

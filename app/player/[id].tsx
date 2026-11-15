@@ -244,8 +244,8 @@ export default function PlayerScreen() {
   };
 
   const handleToggleFavorite = async () => {
-    const isFav = await storage.toggleFavorite(currentStreamId);
-    setIsFavorite(isFav);
+    const updatedFavs = await storage.toggleFavorite(currentStreamId);
+    setIsFavorite(updatedFavs.includes(currentStreamId));
     resetControlsTimer();
   };
 
