@@ -23,11 +23,6 @@
     },
     "android": {
       "package": "com.axiplayer.app",
-      "androidNavigationBar": {
-        "visible": "always",
-        "barStyle": "light-content",
-        "backgroundColor": "#000000"
-      },
       "adaptiveIcon": {
         "backgroundColor": "#050505",
         "foregroundImage": "./assets/icon.png"
@@ -48,10 +43,20 @@
       [
         "expo-navigation-bar",
         {
-          "position": "relative",
+          "style": "light",
           "enforceContrast": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "a1d9bfa1-59ad-4092-b0bf-29e54e8b7468"
+      }
+    }
   }
 }
