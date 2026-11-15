@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   Pressable,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
@@ -524,6 +525,15 @@ export default function LoginScreen() {
             ))}
           </View>
         )}
+
+        {/* Developer Attribution Footer */}
+        <Pressable
+          style={styles.devFooterLink}
+          onPress={() => Linking.openURL('https://github.com/luirton')}
+        >
+          <Ionicons name="logo-github" size={15} color="#888" />
+          <Text style={styles.devFooterText}>Created by Luirton Gurgel</Text>
+        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -732,5 +742,23 @@ const styles = StyleSheet.create({
   },
   removeBtn: {
     padding: 8,
+  },
+  devFooterLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 28,
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: '#121218',
+    borderWidth: 1,
+    borderColor: '#222230',
+  },
+  devFooterText: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

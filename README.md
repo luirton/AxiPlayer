@@ -6,7 +6,8 @@
 
 <p align="center">
   <strong>Player moderno de IPTV & OTT para Android (Smartphones, Tablets e Android TV / TV Box)</strong><br />
-  Alta performance • Interface limpa • Sem mensalidades • Sem bloqueios
+  Alta performance • Interface limpa • Sem mensalidades • Sem bloqueios<br />
+  <sub>Created by <a href="https://github.com/luirton">Luirton Gurgel</a></sub>
 </p>
 
 <p align="center">

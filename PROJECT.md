@@ -14,6 +14,7 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
 | Componente | Definição |
 | :--- | :--- |
 | **Nome do App** | **Axi Player** |
+| **Autor / Criador** | **Luirton Gurgel** ([GitHub: @luirton](https://github.com/luirton)) |
 | **Plataformas** | Android Mobile, Android TV, TV Box, Tablets (e compatível com iOS) |
 | **Stack Principal** | **React Native + Expo** (Expo Router, TypeScript) |
 | **Engine de Reprodução** | **ExoPlayer (`react-native-video`)** para HLS/DASH/MP4 + **LibVLC (`react-native-vlc-media-player`)** para streams legados/TS |

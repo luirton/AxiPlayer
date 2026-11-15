@@ -11,6 +11,7 @@ import {
   Pressable,
   FlatList,
   Dimensions,
+  Linking,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
@@ -340,6 +341,14 @@ export default function SettingsScreen() {
         />
         <Text style={styles.brandName}>Axi Player</Text>
         <Text style={styles.appVersion}>Versão 1.0.0 • Edição Livre</Text>
+
+        <Pressable
+          style={styles.developerLink}
+          onPress={() => Linking.openURL('https://github.com/luirton')}
+        >
+          <Ionicons name="logo-github" size={14} color="#F5A623" />
+          <Text style={styles.developerLinkText}>Created by Luirton Gurgel</Text>
+        </Pressable>
       </View>
 
       {/* Account Info Card */}
@@ -565,6 +574,15 @@ export default function SettingsScreen() {
         <Text style={styles.aboutText}>
           O Axi Player é livre de cobranças mensais, rastreadores e travas de expiração. Desenvolvido para máxima velocidade no seu smartphone, tablet ou Android TV.
         </Text>
+
+        <Pressable
+          style={styles.aboutGithubBtn}
+          onPress={() => Linking.openURL('https://github.com/luirton')}
+        >
+          <Ionicons name="logo-github" size={18} color="#fff" />
+          <Text style={styles.aboutGithubBtnText}>Created by Luirton Gurgel</Text>
+          <Ionicons name="open-outline" size={14} color="#F5A623" style={{ marginLeft: 4 }} />
+        </Pressable>
       </View>
 
       {/* Modal: Alterar PIN de Controle Parental */}
@@ -976,6 +994,24 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
+  developerLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    backgroundColor: '#1b1b26',
+    borderWidth: 1,
+    borderColor: '#2e2e42',
+  },
+  developerLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#F5A623',
+    letterSpacing: 0.3,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -1092,20 +1128,34 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   aboutCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: colors.surface,
-    padding: 16,
-    borderRadius: 14,
+    padding: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
-    gap: 12,
+    gap: 14,
   },
   aboutText: {
-    flex: 1,
     fontSize: 13,
     color: colors.textSecondary,
-    lineHeight: 18,
+    lineHeight: 19,
+  },
+  aboutGithubBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#1b1b26',
+    borderWidth: 1,
+    borderColor: '#34344c',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  aboutGithubBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 
   /* Modal de PIN Parental */
