@@ -41,6 +41,8 @@ export default function LiveScreen() {
   const [categories, setCategories] = useState<IptvCategory[]>([]);
   const [channelsByCategory, setChannelsByCategory] = useState<Record<string, LiveChannel[]>>({});
   const [openCategory, setOpenCategory] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [drawerCategory, setDrawerCategory] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState<LiveChannel | null>(null);
   const [streamUrl, setStreamUrl] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -176,7 +178,7 @@ export default function LiveScreen() {
       const chs = await client.getLiveStreams();
       const found = chs?.find((c) => Number(c.stream_id) === channelId);
       if (found) {
-        selectChannelForPlayer(found);
+        selectChannelForPlayer(found, account, found.category_id);
         if (params.autoFullscreen === '1') {
           handleOpenFullscreen();
         }
@@ -226,10 +228,12 @@ export default function LiveScreen() {
       // Preload channels (NUNCA carrega canal ou categoria adulta automaticamente)
       if (favChs && favChs.length > 0) {
         setOpenCategory(FAVORITES_CAT_ID);
+        setActiveCategory(FAVORITES_CAT_ID);
+        setDrawerCategory(FAVORITES_CAT_ID);
         setChannelsByCategory({ [FAVORITES_CAT_ID]: favChs });
         const safeFav = favChs.find((c) => !isAdultCategory(c.name));
         if (safeFav) {
-          selectChannelForPlayer(safeFav, active);
+          selectChannelForPlayer(safeFav, active, FAVORITES_CAT_ID);
         }
       } else if (cats.length > 0) {
         const safeCats = cats.filter((c) => !isAdultCategory(c.category_name));
@@ -238,11 +242,13 @@ export default function LiveScreen() {
         if (firstSafeCat) {
           const firstCatId = firstSafeCat.category_id;
           setOpenCategory(firstCatId);
+          setActiveCategory(firstCatId);
+          setDrawerCategory(firstCatId);
           const chs = await client.getLiveStreams(firstCatId);
           setChannelsByCategory({ [firstCatId]: chs || [] });
           const safeCh = chs?.find((c) => !isAdultCategory(c.name));
           if (safeCh) {
-            selectChannelForPlayer(safeCh, active);
+            selectChannelForPlayer(safeCh, active, firstCatId);
           }
         }
       } else {
@@ -257,9 +263,44 @@ export default function LiveScreen() {
     }
   };
 
-  const selectChannelForPlayer = async (ch: LiveChannel, acc?: SavedAccount) => {
+  const ensureCategoryLoaded = async (catId: string, acc?: SavedAccount) => {
+    if (!catId) return;
+    if (catId === FAVORITES_CAT_ID) {
+      if (!channelsByCategory[FAVORITES_CAT_ID] || channelsByCategory[FAVORITES_CAT_ID].length === 0) {
+        const favChs = await storage.getFavoriteChannels();
+        setFavoriteChannelsList(favChs);
+        setChannelsByCategory((prev) => ({ ...prev, [FAVORITES_CAT_ID]: favChs }));
+      }
+      return;
+    }
+
+    if (!channelsByCategory[catId]) {
+      const targetAcc = acc || account;
+      if (!targetAcc) return;
+      setLoadingCategory(true);
+      try {
+        const client = new XtreamClient(targetAcc.serverUrl, targetAcc.username, targetAcc.password);
+        const chs = await client.getLiveStreams(catId);
+        setChannelsByCategory((prev) => ({ ...prev, [catId]: chs || [] }));
+      } catch (err) {
+        console.warn('Erro ao carregar canais da categoria:', err);
+      } finally {
+        setLoadingCategory(false);
+      }
+    }
+  };
+
+  const selectChannelForPlayer = async (ch: LiveChannel, acc?: SavedAccount, categoryId?: string) => {
     setActiveChannel(ch);
     const targetAccount = acc || account;
+
+    const targetCatId = categoryId || ch.category_id || activeCategory || openCategory;
+    if (targetCatId) {
+      setActiveCategory(targetCatId);
+      setDrawerCategory(targetCatId);
+      ensureCategoryLoaded(targetCatId, targetAccount || undefined);
+    }
+
     if (!targetAccount) return;
 
     try {
@@ -311,27 +352,9 @@ export default function LiveScreen() {
 
   const openVerifiedCategory = async (catId: string) => {
     setOpenCategory(catId);
-
-    // Categoria de Favoritos
-    if (catId === FAVORITES_CAT_ID) {
-      const favChs = await storage.getFavoriteChannels();
-      setFavoriteChannelsList(favChs);
-      setChannelsByCategory((prev) => ({ ...prev, [catId]: favChs }));
-      return;
-    }
-
-    if (!channelsByCategory[catId] && account) {
-      setLoadingCategory(true);
-      try {
-        const client = new XtreamClient(account.serverUrl, account.username, account.password);
-        const chs = await client.getLiveStreams(catId);
-        setChannelsByCategory((prev) => ({ ...prev, [catId]: chs || [] }));
-      } catch (err) {
-        console.warn(err);
-      } finally {
-        setLoadingCategory(false);
-      }
-    }
+    setActiveCategory(catId);
+    setDrawerCategory(catId);
+    ensureCategoryLoaded(catId);
   };
 
   const handleConfirmPin = async () => {
@@ -409,27 +432,46 @@ export default function LiveScreen() {
     });
   };
 
-  // Channel Switching (|◀ and ▶|)
-  const currentChannelsList = openCategory ? channelsByCategory[openCategory] || [] : [];
+  // Channel Switching (|◀ and ▶|) - Confinado à categoria do canal atualmente em reprodução
+  const activeCatId = activeCategory || openCategory || categories[0]?.category_id;
+  const currentChannelsList = useMemo(() => {
+    if (!activeCatId) return [];
+    if (activeCatId === FAVORITES_CAT_ID) return favoriteChannelsList;
+    return channelsByCategory[activeCatId] || [];
+  }, [activeCatId, favoriteChannelsList, channelsByCategory]);
+
+  // Grade de Canais (Drawer em tela cheia)
+  const drawerChannelsList = useMemo(() => {
+    const targetCat = drawerCategory || activeCategory || openCategory;
+    if (!targetCat) return [];
+    if (targetCat === FAVORITES_CAT_ID) return favoriteChannelsList;
+    return channelsByCategory[targetCat] || [];
+  }, [drawerCategory, activeCategory, openCategory, favoriteChannelsList, channelsByCategory]);
 
   const handleNextChannel = () => {
     if (currentChannelsList.length === 0 || !activeChannel) return;
-    const currentIndex = currentChannelsList.findIndex((c) => c.stream_id === activeChannel.stream_id);
+    let currentIndex = currentChannelsList.findIndex(
+      (c) => Number(c.stream_id) === Number(activeChannel.stream_id)
+    );
+    if (currentIndex === -1) currentIndex = 0;
     const nextIndex = (currentIndex + 1) % currentChannelsList.length;
     const nextChannel = currentChannelsList[nextIndex];
     if (nextChannel) {
-      selectChannelForPlayer(nextChannel);
+      selectChannelForPlayer(nextChannel, undefined, activeCatId);
     }
     resetControlsTimer();
   };
 
   const handlePrevChannel = () => {
     if (currentChannelsList.length === 0 || !activeChannel) return;
-    const currentIndex = currentChannelsList.findIndex((c) => c.stream_id === activeChannel.stream_id);
+    let currentIndex = currentChannelsList.findIndex(
+      (c) => Number(c.stream_id) === Number(activeChannel.stream_id)
+    );
+    if (currentIndex === -1) currentIndex = 0;
     const prevIndex = (currentIndex - 1 + currentChannelsList.length) % currentChannelsList.length;
     const prevChannel = currentChannelsList[prevIndex];
     if (prevChannel) {
-      selectChannelForPlayer(prevChannel);
+      selectChannelForPlayer(prevChannel, undefined, activeCatId);
     }
     resetControlsTimer();
   };
@@ -471,11 +513,12 @@ export default function LiveScreen() {
     }
   };
 
-  const handleSelectChannelAndOpenFullscreen = (ch: LiveChannel) => {
+  const handleSelectChannelAndOpenFullscreen = (ch: LiveChannel, catId?: string) => {
+    const targetCat = catId || ch.category_id || activeCategory || openCategory;
     // Se o canal for adulto, solicita PIN antes de tocar
     const isAdult =
       isAdultCategory(ch.name) ||
-      (openCategory && categories.some((c) => c.category_id === openCategory && isAdultCategory(c.category_name)));
+      (targetCat && categories.some((c) => c.category_id === targetCat && isAdultCategory(c.category_name)));
 
     if (isAdult) {
       setTargetAdultCategory(null);
@@ -486,7 +529,7 @@ export default function LiveScreen() {
       return;
     }
 
-    selectChannelForPlayer(ch);
+    selectChannelForPlayer(ch, account || undefined, targetCat || undefined);
     handleOpenFullscreen();
   };
 
@@ -721,14 +764,14 @@ export default function LiveScreen() {
               ) : (
                 <View style={styles.searchedChannelsList}>
                   {searchedChannels.map((ch, idx) => {
-                    const isChannelActive = activeChannel?.stream_id === ch.stream_id;
+                    const isChannelActive = Number(activeChannel?.stream_id) === Number(ch.stream_id);
                     const isFav = favorites.includes(ch.stream_id);
 
                     return (
                       <Pressable
                         key={ch.stream_id}
                         style={[styles.channelRow, isChannelActive && styles.channelRowActive]}
-                        onPress={() => selectChannelForPlayer(ch)}
+                        onPress={() => selectChannelForPlayer(ch, undefined, ch.category_id)}
                       >
                         <Text style={styles.channelNum}>
                           {ch.num || idx + 1}
@@ -876,14 +919,14 @@ export default function LiveScreen() {
                           </View>
                         ) : (
                           catChannels.map((ch, idx) => {
-                            const isChannelActive = activeChannel?.stream_id === ch.stream_id;
+                            const isChannelActive = Number(activeChannel?.stream_id) === Number(ch.stream_id);
                             const isFav = favorites.includes(ch.stream_id);
 
                             return (
                               <Pressable
                                 key={ch.stream_id}
                                 style={[styles.channelRow, isChannelActive && styles.channelRowActive]}
-                                onPress={() => handleSelectChannelAndOpenFullscreen(ch)}
+                                onPress={() => handleSelectChannelAndOpenFullscreen(ch, cat.category_id)}
                               >
                                 <Text style={styles.channelNum}>
                                   {ch.num || idx + 1}
@@ -1117,34 +1160,80 @@ export default function LiveScreen() {
               />
               <View style={styles.drawerSheet}>
                 <View style={styles.drawerHeader}>
-                  <Text style={styles.drawerTitle}>Trocar Canal</Text>
-                  <Pressable onPress={() => setChannelDrawerOpen(false)}>
+                  <View style={styles.drawerHeaderTitleBox}>
+                    <Text style={styles.drawerTitle}>Grade de Canais</Text>
+                    <Text style={styles.drawerCategorySub} numberOfLines={1}>
+                      {categories.find((c) => c.category_id === (drawerCategory || activeCategory || openCategory))?.category_name || 'Canais'}
+                    </Text>
+                  </View>
+                  <Pressable onPress={() => setChannelDrawerOpen(false)} hitSlop={10}>
                     <Ionicons name="close" size={24} color="#fff" />
                   </Pressable>
                 </View>
-                <FlatList
-                  data={currentChannelsList}
-                  keyExtractor={(item) => String(item.stream_id)}
-                  renderItem={({ item, index }) => {
-                    const isCur = item.stream_id === activeChannel.stream_id;
-                    return (
-                      <Pressable
-                        style={[styles.drawerItem, isCur && styles.drawerItemActive]}
-                        onPress={() => {
-                          selectChannelForPlayer(item);
-                          setChannelDrawerOpen(false);
-                          resetControlsTimer();
-                        }}
-                      >
-                        <Text style={styles.drawerItemNum}>{item.num || index + 1}</Text>
-                        <Text style={[styles.drawerItemName, isCur && styles.drawerItemNameActive]} numberOfLines={1}>
-                          {item.name}
-                        </Text>
-                        {isCur && <Ionicons name="volume-high" size={18} color={colors.primary} />}
-                      </Pressable>
-                    );
-                  }}
-                />
+
+                {/* Horizontal Category Selector Chips */}
+                <View style={styles.drawerCategoryContainer}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.drawerCategoryScroll}
+                  >
+                    {categories.map((c) => {
+                      const isSelected = (drawerCategory || activeCategory || openCategory) === c.category_id;
+                      return (
+                        <Pressable
+                          key={c.category_id}
+                          style={[styles.drawerCatChip, isSelected && styles.drawerCatChipActive]}
+                          onPress={() => {
+                            setDrawerCategory(c.category_id);
+                            ensureCategoryLoaded(c.category_id);
+                          }}
+                        >
+                          <Text
+                            style={[
+                              styles.drawerCatChipText,
+                              isSelected && styles.drawerCatChipTextActive,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {c.category_name}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+
+                {loadingCategory && drawerChannelsList.length === 0 ? (
+                  <View style={styles.drawerLoadingBox}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={styles.drawerLoadingText}>Carregando canais...</Text>
+                  </View>
+                ) : (
+                  <FlatList
+                    data={drawerChannelsList}
+                    keyExtractor={(item) => String(item.stream_id)}
+                    renderItem={({ item, index }) => {
+                      const isCur = Number(item.stream_id) === Number(activeChannel.stream_id);
+                      return (
+                        <Pressable
+                          style={[styles.drawerItem, isCur && styles.drawerItemActive]}
+                          onPress={() => {
+                            selectChannelForPlayer(item, undefined, drawerCategory || activeCategory || openCategory || undefined);
+                            setChannelDrawerOpen(false);
+                            resetControlsTimer();
+                          }}
+                        >
+                          <Text style={styles.drawerItemNum}>{item.num || index + 1}</Text>
+                          <Text style={[styles.drawerItemName, isCur && styles.drawerItemNameActive]} numberOfLines={1}>
+                            {item.name}
+                          </Text>
+                          {isCur && <Ionicons name="volume-high" size={18} color={colors.primary} />}
+                        </Pressable>
+                      );
+                    }}
+                  />
+                )}
               </View>
             </View>
           </Modal>
@@ -1742,8 +1831,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   drawerSheet: {
-    width: '75%',
-    maxWidth: 320,
+    width: '78%',
+    maxWidth: 340,
     backgroundColor: '#121217',
     paddingTop: 40,
     paddingHorizontal: 16,
@@ -1763,6 +1852,54 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '800',
+  },
+  drawerHeaderTitleBox: {
+    flex: 1,
+  },
+  drawerCategorySub: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  drawerCategoryContainer: {
+    marginBottom: 10,
+    maxHeight: 38,
+  },
+  drawerCategoryScroll: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  drawerCatChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#1c1b26',
+    borderWidth: 1,
+    borderColor: '#2e2c3e',
+  },
+  drawerCatChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  drawerCatChipText: {
+    color: '#aaa',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  drawerCatChipTextActive: {
+    color: '#000',
+    fontWeight: '800',
+  },
+  drawerLoadingBox: {
+    padding: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  drawerLoadingText: {
+    color: '#888',
+    fontSize: 12,
   },
   drawerItem: {
     flexDirection: 'row',
