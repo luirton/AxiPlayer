@@ -7,11 +7,6 @@
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "androidNavigationBar": {
-      "visible": "immersive",
-      "barStyle": "light-content",
-      "backgroundColor": "#000000"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.axiplayer.app",
@@ -41,7 +36,6 @@
         "WAKE_LOCK",
         "FOREGROUND_SERVICE"
       ],
-      "usesCleartextTraffic": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
