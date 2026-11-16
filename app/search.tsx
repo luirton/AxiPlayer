@@ -7,7 +7,7 @@ import {
   FlatList,
   Pressable,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   Modal,
   ScrollView,
 } from 'react-native';
@@ -17,13 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../src/theme/colors';
 import { storage } from '../src/services/storage';
 import { XtreamClient } from '../src/services/xtreamClient';
-import { LiveChannel, VodMovie, SeriesItem, SeriesInfoResponse, SavedAccount } from '../src/types/iptv';
+import { LiveChannel, VodMovie, SeriesItem, SeriesInfoResponse, SavedAccount, IptvCategory } from '../src/types/iptv';
 import { FocusableItem } from '../src/components/common/FocusableItem';
-
-const { width } = Dimensions.get('window');
-const isLargeScreen = width >= 768;
-const NUM_COLUMNS = isLargeScreen ? 5 : 3;
-const CARD_WIDTH = (width - 32 - (NUM_COLUMNS - 1) * 10) / NUM_COLUMNS;
 
 type SearchFilterType = 'all' | 'movies' | 'series';
 
@@ -39,12 +34,23 @@ interface SearchResultItem {
 
 export default function SearchScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ initialType?: string; query?: string }>();
+  const params = useLocalSearchParams<{
+    initialType?: string;
+    query?: string;
+    categoryId?: string;
+    categoryName?: string;
+  }>();
+  const { width } = useWindowDimensions();
+  const isLandscape = width > 500;
+  const numColumns = width >= 768 ? 5 : isLandscape ? 4 : 3;
+  const cardWidth = (width - 32 - (numColumns - 1) * 10) / numColumns;
 
   const [query, setQuery] = useState(params.query || '');
   const [filterType, setFilterType] = useState<SearchFilterType>(
     (params.initialType as SearchFilterType) || 'all'
   );
+  const [selectedCategory, setSelectedCategory] = useState<string>(params.categoryId || 'all');
+  const [displayLimit, setDisplayLimit] = useState<number>(24);
 
   const [account, setAccount] = useState<SavedAccount | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,6 +58,8 @@ export default function SearchScreen() {
   // Raw data collections for fast instant search
   const [movies, setMovies] = useState<VodMovie[]>([]);
   const [series, setSeries] = useState<SeriesItem[]>([]);
+  const [vodCategories, setVodCategories] = useState<IptvCategory[]>([]);
+  const [seriesCategories, setSeriesCategories] = useState<IptvCategory[]>([]);
 
   // Series Detail Modal state
   const [selectedSeries, setSelectedSeries] = useState<SeriesItem | null>(null);
@@ -60,6 +68,11 @@ export default function SearchScreen() {
   const [loadingSeriesInfo, setLoadingSeriesInfo] = useState(false);
 
   const inputRef = useRef<any>(null);
+
+  // Redefine paginação ao mudar qualquer filtro
+  useEffect(() => {
+    setDisplayLimit(24);
+  }, [query, filterType, selectedCategory]);
 
   useEffect(() => {
     loadData();
@@ -77,10 +90,12 @@ export default function SearchScreen() {
 
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
 
-      // Carrega simultaneamente os catálogos de filmes e séries
-      const [moviesRes, seriesRes] = await Promise.allSettled([
+      // Carrega simultaneamente os catálogos e categorias de filmes e séries
+      const [moviesRes, seriesRes, vodCatsRes, seriesCatsRes] = await Promise.allSettled([
         client.getVodStreams(),
         client.getSeries(),
+        client.getVodCategories(),
+        client.getSeriesCategories(),
       ]);
 
       if (moviesRes.status === 'fulfilled' && Array.isArray(moviesRes.value)) {
@@ -89,6 +104,12 @@ export default function SearchScreen() {
       if (seriesRes.status === 'fulfilled' && Array.isArray(seriesRes.value)) {
         setSeries(seriesRes.value);
       }
+      if (vodCatsRes.status === 'fulfilled' && Array.isArray(vodCatsRes.value)) {
+        setVodCategories(vodCatsRes.value);
+      }
+      if (seriesCatsRes.status === 'fulfilled' && Array.isArray(seriesCatsRes.value)) {
+        setSeriesCategories(seriesCatsRes.value);
+      }
     } catch (err) {
       console.warn('Erro ao carregar catálogo para busca:', err);
     } finally {
@@ -96,7 +117,13 @@ export default function SearchScreen() {
     }
   };
 
-  // Filtragem reativa instantânea conforme o usuário digita ou altera o tipo
+  const availableCategories = useMemo(() => {
+    if (filterType === 'movies') return vodCategories;
+    if (filterType === 'series') return seriesCategories;
+    return vodCategories;
+  }, [filterType, vodCategories, seriesCategories]);
+
+  // Filtragem reativa instantânea conforme o usuário digita ou altera filtros
   const results = useMemo<SearchResultItem[]>(() => {
     const cleanQuery = query.trim().toLowerCase();
 
@@ -129,13 +156,21 @@ export default function SearchScreen() {
       combined = formattedSeries;
     }
 
-    if (!cleanQuery) {
-      // Se não digitou nada, mostra os primeiros itens de destaque
-      return combined.slice(0, 60);
+    // 1. Filtro por Categoria
+    if (selectedCategory && selectedCategory !== 'all') {
+      combined = combined.filter((item) => {
+        const catId = item.rawItem?.category_id;
+        return String(catId) === String(selectedCategory);
+      });
     }
 
-    return combined.filter((item) => item.name.toLowerCase().includes(cleanQuery));
-  }, [query, filterType, movies, series]);
+    // 2. Filtro por Busca de Texto
+    if (cleanQuery) {
+      combined = combined.filter((item) => item.name.toLowerCase().includes(cleanQuery));
+    }
+
+    return combined;
+  }, [query, filterType, selectedCategory, movies, series]);
 
   const handleSelectItem = async (item: SearchResultItem) => {
     if (item.type === 'movie') {
@@ -174,8 +209,11 @@ export default function SearchScreen() {
 
   const renderCard = ({ item }: { item: SearchResultItem }) => {
     return (
-      <FocusableItem style={styles.cardItem} onPress={() => handleSelectItem(item)}>
-        <View style={styles.cardPosterBox}>
+      <FocusableItem
+        style={[styles.cardItem, { width: cardWidth }]}
+        onPress={() => handleSelectItem(item)}
+      >
+        <View style={[styles.cardPosterBox, { width: cardWidth, height: cardWidth * 1.48 }]}>
           {item.icon ? (
             <Image source={{ uri: item.icon }} style={styles.cardPoster} contentFit="cover" />
           ) : (
@@ -251,7 +289,10 @@ export default function SearchScreen() {
           {/* Todos (Padrão Inicial) */}
           <Pressable
             style={[styles.filterTabItem, filterType === 'all' && styles.filterTabItemActive]}
-            onPress={() => setFilterType('all')}
+            onPress={() => {
+              setFilterType('all');
+              setSelectedCategory('all');
+            }}
           >
             <Text style={[styles.filterTabText, filterType === 'all' && styles.filterTabTextActive]}>
               Todos
@@ -262,7 +303,10 @@ export default function SearchScreen() {
           {/* Filmes */}
           <Pressable
             style={[styles.filterTabItem, filterType === 'movies' && styles.filterTabItemActive]}
-            onPress={() => setFilterType('movies')}
+            onPress={() => {
+              setFilterType('movies');
+              setSelectedCategory('all');
+            }}
           >
             <Text style={[styles.filterTabText, filterType === 'movies' && styles.filterTabTextActive]}>
               Filmes
@@ -273,7 +317,10 @@ export default function SearchScreen() {
           {/* Séries */}
           <Pressable
             style={[styles.filterTabItem, filterType === 'series' && styles.filterTabItemActive]}
-            onPress={() => setFilterType('series')}
+            onPress={() => {
+              setFilterType('series');
+              setSelectedCategory('all');
+            }}
           >
             <Text style={[styles.filterTabText, filterType === 'series' && styles.filterTabTextActive]}>
               Séries
@@ -283,14 +330,62 @@ export default function SearchScreen() {
         </ScrollView>
       </View>
 
+      {/* Filtro por Categoria (Carrossel Horizontal de Chips) */}
+      {availableCategories.length > 0 && (
+        <View style={styles.chipsFilterRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipsScrollContent}
+          >
+            <Pressable
+              style={[
+                styles.filterChip,
+                selectedCategory === 'all' && styles.filterChipActive,
+              ]}
+              onPress={() => setSelectedCategory('all')}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  selectedCategory === 'all' && styles.filterChipTextActive,
+                ]}
+              >
+                Todas as Categorias
+              </Text>
+            </Pressable>
+
+            {availableCategories.map((cat) => {
+              const isActive = String(selectedCategory) === String(cat.category_id);
+              return (
+                <Pressable
+                  key={cat.category_id}
+                  style={[styles.filterChip, isActive && styles.filterChipActive]}
+                  onPress={() => setSelectedCategory(cat.category_id)}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      isActive && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {cat.category_name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Contador de Resultados da Busca */}
       <View style={styles.resultsHeaderRow}>
         <Text style={styles.resultsTitle}>
-          Resultado da busca <Text style={styles.resultsCount}>({results.length})</Text>
+          Títulos encontrados <Text style={styles.resultsCount}>({results.length})</Text>
         </Text>
       </View>
 
-      {/* Corpo da Busca */}
+      {/* Corpo da Busca com Paginação Progressiva Fluida */}
       {loading ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -301,22 +396,36 @@ export default function SearchScreen() {
           <Ionicons name="search-outline" size={54} color="#444" />
           <Text style={styles.emptyTitle}>Nenhum resultado encontrado</Text>
           <Text style={styles.emptySub}>
-            Não encontramos nada para "{query}". Tente buscar por outro termo ou mude o filtro acima.
+            Não encontramos nada com os filtros selecionados. Tente buscar por outro termo ou mude os filtros acima.
           </Text>
         </View>
       ) : (
         <FlatList
-          data={results}
+          data={results.slice(0, displayLimit)}
           keyExtractor={(item) => `${item.type}-${item.id}`}
           renderItem={renderCard}
-          numColumns={NUM_COLUMNS}
-          key={NUM_COLUMNS}
+          numColumns={numColumns}
+          key={`search-grid-${numColumns}`}
           contentContainerStyle={styles.gridContent}
           columnWrapperStyle={styles.columnWrapper}
           showsVerticalScrollIndicator={false}
-          initialNumToRender={15}
-          maxToRenderPerBatch={20}
-          windowSize={7}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
+          onEndReached={() => {
+            if (displayLimit < results.length) {
+              setDisplayLimit((prev) => prev + 24);
+            }
+          }}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={
+            displayLimit < results.length ? (
+              <View style={styles.loadMoreFooter}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={styles.loadMoreText}>Carregando mais títulos...</Text>
+              </View>
+            ) : undefined
+          }
         />
       )}
 
@@ -497,8 +606,53 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 2.5,
-    backgroundColor: '#FFA000',
+    backgroundColor: colors.primary,
     borderRadius: 2,
+  },
+  chipsFilterRow: {
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#161622',
+  },
+  chipsScrollContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+    alignItems: 'center',
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#14141e',
+    borderWidth: 1,
+    borderColor: '#242434',
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    color: '#aaa',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: '#000',
+    fontWeight: '800',
+  },
+  loadMoreFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    gap: 8,
+  },
+  loadMoreText: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
   },
 
   /* Resultados */
@@ -527,12 +681,8 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 16,
   },
-  cardItem: {
-    width: CARD_WIDTH,
-  },
+  cardItem: {},
   cardPosterBox: {
-    width: CARD_WIDTH,
-    height: CARD_WIDTH * 1.48,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#14141b',
@@ -672,7 +822,7 @@ const styles = StyleSheet.create({
   },
   modalGenre: {
     fontSize: 12,
-    color: '#FFA000',
+    color: colors.primary,
     fontWeight: '600',
   },
   seasonsHeader: {

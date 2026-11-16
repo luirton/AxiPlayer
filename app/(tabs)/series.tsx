@@ -6,7 +6,7 @@ import {
   FlatList,
   TextInput,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   Pressable,
   Modal,
   ScrollView,
@@ -22,10 +22,12 @@ import { IptvCategory, SeriesItem, SeriesInfoResponse, SavedAccount } from '../.
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { isAdultCategory } from '../../src/services/parentalControl';
 
-const { width } = Dimensions.get('window');
-
 export default function SeriesScreen() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const numGridColumns = isLandscape ? 5 : 3;
+  const gridCardWidth = (width - 32 - (numGridColumns - 1) * 12) / numGridColumns;
   const params = useLocalSearchParams<{ brand?: string; brandName?: string; seriesId?: string }>();
   const [categories, setCategories] = useState<IptvCategory[]>([]);
   const [seriesList, setSeriesList] = useState<SeriesItem[]>([]);
@@ -42,6 +44,12 @@ export default function SeriesScreen() {
 
   // Hero Item
   const [heroSeries, setHeroSeries] = useState<SeriesItem | null>(null);
+
+  const pickRandomSeries = (list: SeriesItem[]) => {
+    if (!list || list.length === 0) return null;
+    const pool = list.slice(0, Math.min(list.length, 30));
+    return pool[Math.floor(Math.random() * pool.length)] || list[0];
+  };
 
   // Detail Modal state (Fiel à Imagem 2)
   const [selectedSeries, setSelectedSeries] = useState<SeriesItem | null>(null);
@@ -129,22 +137,23 @@ export default function SeriesScreen() {
           setSelectedBrandName(params.brandName || matchingCat.category_name);
           const s = await client.getSeries(matchingCat.category_id);
           setSeriesList(s || []);
-          if (s && s.length > 0) setHeroSeries(s[0]);
+          if (s && s.length > 0) setHeroSeries(pickRandomSeries(s));
           return;
         }
       }
 
-      // Carga inicial: Categoria padrão ou primeira categoria
-      if (cats && cats.length > 0) {
-        const firstCatId = cats[0].category_id;
-        const s = await client.getSeries(firstCatId);
-        setSeriesList(s || []);
-        if (s && s.length > 0) setHeroSeries(s[0]);
-      } else {
-        const s = await client.getSeries();
-        setSeriesList(s || []);
-        if (s && s.length > 0) setHeroSeries(s[0]);
+      // Carga inicial para "Para você": Carregamento dinâmico e aleatório
+      let initialSeries: SeriesItem[] = [];
+      try {
+        const allS = await client.getSeries();
+        initialSeries = (allS || []).sort(() => 0.5 - Math.random());
+      } catch (e) {
+        if (cats && cats.length > 0) {
+          initialSeries = (await client.getSeries(cats[0].category_id)) || [];
+        }
       }
+      setSeriesList(initialSeries);
+      if (initialSeries.length > 0) setHeroSeries(pickRandomSeries(initialSeries));
     } catch (err: any) {
       console.warn('Error loading series:', err);
       setErrorMessage(err?.message || 'Falha ao carregar catálogo de séries.');
@@ -163,19 +172,27 @@ export default function SeriesScreen() {
         const favSeries = await storage.getFavoriteSeries();
         setSeriesList(favSeries || []);
         if (favSeries && favSeries.length > 0) {
-          setHeroSeries(favSeries[0]);
+          setHeroSeries(pickRandomSeries(favSeries));
         }
         return;
       }
 
       const client = new XtreamClient(account.serverUrl, account.username, account.password);
-      const s = catId === 'for_you'
-        ? (categories.length > 0 ? await client.getSeries(categories[0].category_id) : await client.getSeries())
-        : await client.getSeries(catId);
+      let s: SeriesItem[] = [];
+      if (catId === 'for_you') {
+        // Carrega aleatório e dinâmico a cada clique
+        const allS = await client.getSeries();
+        s = (allS || []).sort(() => 0.5 - Math.random());
+      } else if (catId === 'all') {
+        // Carrega todas as séries sem filtro de categoria
+        s = (await client.getSeries()) || [];
+      } else {
+        s = (await client.getSeries(catId)) || [];
+      }
 
       setSeriesList(s || []);
       if (s && s.length > 0) {
-        setHeroSeries(s[0]);
+        setHeroSeries(pickRandomSeries(s));
       }
     } catch (err) {
       console.warn(err);
@@ -437,6 +454,25 @@ export default function SeriesScreen() {
             {selectedCategory === 'for_you' && <View style={styles.activeTabIndicator} />}
           </Pressable>
 
+          {/* Aba: Todas as Séries (Abre diretamente na tela de catálogo completo com paginação) */}
+          <Pressable
+            style={styles.categoryTabItem}
+            onPress={() => {
+              router.push({
+                pathname: '/search',
+                params: {
+                  initialType: 'series',
+                  categoryId: 'all',
+                  categoryName: 'Todas as Séries',
+                },
+              });
+            }}
+          >
+            <Text style={styles.categoryTabText}>
+              Todas as Séries
+            </Text>
+          </Pressable>
+
           {/* Aba: Meus Favoritos */}
           <Pressable
             style={[styles.categoryTabItem, selectedCategory === 'favorites' && styles.categoryTabItemActive]}
@@ -489,85 +525,164 @@ export default function SeriesScreen() {
           contentContainerStyle={styles.mainScrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Hero Banner em Destaque (Fiel à Imagem 1) */}
+          {/* Hero Banner em Destaque */}
           {heroSeries ? (
             <View style={styles.heroContainer}>
-              <View style={styles.heroCard}>
-                {heroSeries.cover ? (
-                  <Image
-                    source={{ uri: heroSeries.cover }}
-                    style={styles.heroImage}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View style={styles.heroFallback}>
-                    <Ionicons name="albums" size={64} color="#333" />
-                  </View>
-                )}
-
-                <LinearGradient
-                  colors={['transparent', 'rgba(10,10,12,0.4)', 'rgba(10,10,12,0.98)']}
-                  style={styles.heroGradient}
-                >
-                  <Text style={styles.heroTitle} numberOfLines={2}>
-                    {heroSeries.name}
-                  </Text>
-
-                  {/* Metadados: Nota, Ano, Gênero */}
-                  <View style={styles.heroMetaRow}>
-                    <View style={styles.metaRatingBox}>
-                      <Ionicons name="star" size={12} color="#FFD700" />
-                      <Text style={styles.metaRatingText}>{heroRating !== '0' ? heroRating : '8.0'}</Text>
-                    </View>
-                    <Text style={styles.metaDot}>•</Text>
-                    <Text style={styles.metaText}>{heroSeries.releaseDate?.slice(0, 4) || '2025'}</Text>
-                    {heroSeries.genre ? (
-                      <>
-                        <Text style={styles.metaDot}>•</Text>
-                        <Text style={styles.metaText} numberOfLines={1}>{heroSeries.genre}</Text>
-                      </>
+              {isLandscape ? (
+                <View style={styles.heroCardLandscape}>
+                  {/* Pôster estilo Filmes Recentes no lado esquerdo */}
+                  <View style={styles.heroLandscapePosterBox}>
+                    {heroSeries.cover ? (
+                      <Image
+                        source={{ uri: heroSeries.cover }}
+                        style={styles.heroLandscapePoster}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <View style={styles.heroFallback}>
+                        <Ionicons name="albums" size={48} color="#555" />
+                      </View>
+                    )}
+                    {heroRating !== '0' ? (
+                      <View style={styles.heroLandscapeRatingBadge}>
+                        <Ionicons name="star" size={11} color="#FFD700" />
+                        <Text style={styles.heroLandscapeRatingText}>{heroRating}</Text>
+                      </View>
                     ) : null}
                   </View>
 
-                  {/* Botões de Ação: Assistir Agora e Favoritar */}
-                  <View style={styles.heroActionsRow}>
-                    <FocusableItem
-                      style={styles.heroWatchBtn}
-                      onPress={() => handleSeriesClick(heroSeries)}
-                    >
-                      <LinearGradient
-                        colors={['#FF6A00', '#FFA000']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.heroWatchGradient}
+                  {/* Informações ao lado */}
+                  <View style={styles.heroLandscapeInfo}>
+                    <Text style={styles.heroLandscapeTitle} numberOfLines={2}>
+                      {heroSeries.name}
+                    </Text>
+
+                    <View style={styles.heroLandscapeMetaRow}>
+                      <View style={styles.metaRatingBox}>
+                        <Ionicons name="star" size={12} color="#FFD700" />
+                        <Text style={styles.metaRatingText}>{heroRating !== '0' ? heroRating : '8.0'}</Text>
+                      </View>
+                      <Text style={styles.metaDot}>•</Text>
+                      <Text style={styles.metaText}>{heroSeries.releaseDate?.slice(0, 4) || '2025'}</Text>
+                      {heroSeries.genre ? (
+                        <>
+                          <Text style={styles.metaDot}>•</Text>
+                          <Text style={styles.metaText} numberOfLines={1}>{heroSeries.genre}</Text>
+                        </>
+                      ) : null}
+                    </View>
+
+                    <Text style={styles.heroLandscapePlot} numberOfLines={2}>
+                      {heroSeries.plot || 'Uma história envolvente e emocionante repleta de reviravoltas imperdíveis.'}
+                    </Text>
+
+                    <View style={styles.heroLandscapeActionsRow}>
+                      <FocusableItem
+                        style={styles.heroWatchBtn}
+                        onPress={() => handleSeriesClick(heroSeries)}
                       >
-                        <Ionicons name="play" size={16} color="#000" />
-                        <Text style={styles.heroWatchText}>Assistir agora</Text>
-                      </LinearGradient>
-                    </FocusableItem>
+                        <LinearGradient
+                          colors={['#00E5FF', '#A855F7']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.heroWatchGradient}
+                        >
+                          <Ionicons name="play" size={16} color="#000" />
+                          <Text style={styles.heroWatchText}>Assistir agora</Text>
+                        </LinearGradient>
+                      </FocusableItem>
 
-                    <Pressable
-                      style={styles.heroFavBtn}
-                      onPress={() => handleToggleFavoriteSeries(heroSeries)}
-                    >
-                      <Ionicons
-                        name={seriesFavorites.includes(heroSeries.series_id) ? 'star' : 'star-outline'}
-                        size={20}
-                        color={seriesFavorites.includes(heroSeries.series_id) ? '#FFD700' : '#fff'}
-                      />
-                    </Pressable>
+                      <Pressable
+                        style={styles.heroFavBtn}
+                        onPress={() => handleToggleFavoriteSeries(heroSeries)}
+                      >
+                        <Ionicons
+                          name={seriesFavorites.includes(heroSeries.series_id) ? 'star' : 'star-outline'}
+                          size={20}
+                          color={seriesFavorites.includes(heroSeries.series_id) ? '#FFD700' : '#fff'}
+                        />
+                      </Pressable>
+                    </View>
                   </View>
+                </View>
+              ) : (
+                <View style={styles.heroCard}>
+                  {heroSeries.cover ? (
+                    <Image
+                      source={{ uri: heroSeries.cover }}
+                      style={styles.heroImage}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={styles.heroFallback}>
+                      <Ionicons name="albums" size={64} color="#333" />
+                    </View>
+                  )}
 
-                  {/* Sinopse da Série */}
-                  <Text style={styles.heroPlot} numberOfLines={2}>
-                    {heroSeries.plot || 'Uma história envolvente e emocionante repleta de reviravoltas imperdíveis.'}
-                  </Text>
-                </LinearGradient>
-              </View>
+                  <LinearGradient
+                    colors={['transparent', 'rgba(10,10,12,0.4)', 'rgba(10,10,12,0.98)']}
+                    style={styles.heroGradient}
+                  >
+                    <Text style={styles.heroTitle} numberOfLines={2}>
+                      {heroSeries.name}
+                    </Text>
+
+                    {/* Metadados: Nota, Ano, Gênero */}
+                    <View style={styles.heroMetaRow}>
+                      <View style={styles.metaRatingBox}>
+                        <Ionicons name="star" size={12} color="#FFD700" />
+                        <Text style={styles.metaRatingText}>{heroRating !== '0' ? heroRating : '8.0'}</Text>
+                      </View>
+                      <Text style={styles.metaDot}>•</Text>
+                      <Text style={styles.metaText}>{heroSeries.releaseDate?.slice(0, 4) || '2025'}</Text>
+                      {heroSeries.genre ? (
+                        <>
+                          <Text style={styles.metaDot}>•</Text>
+                          <Text style={styles.metaText} numberOfLines={1}>{heroSeries.genre}</Text>
+                        </>
+                      ) : null}
+                    </View>
+
+                    {/* Botões de Ação: Assistir Agora e Favoritar */}
+                    <View style={styles.heroActionsRow}>
+                      <FocusableItem
+                        style={styles.heroWatchBtn}
+                        onPress={() => handleSeriesClick(heroSeries)}
+                      >
+                        <LinearGradient
+                          colors={['#00E5FF', '#A855F7']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.heroWatchGradient}
+                        >
+                          <Ionicons name="play" size={16} color="#000" />
+                          <Text style={styles.heroWatchText}>Assistir agora</Text>
+                        </LinearGradient>
+                      </FocusableItem>
+
+                      <Pressable
+                        style={styles.heroFavBtn}
+                        onPress={() => handleToggleFavoriteSeries(heroSeries)}
+                      >
+                        <Ionicons
+                          name={seriesFavorites.includes(heroSeries.series_id) ? 'star' : 'star-outline'}
+                          size={20}
+                          color={seriesFavorites.includes(heroSeries.series_id) ? '#FFD700' : '#fff'}
+                        />
+                      </Pressable>
+                    </View>
+
+                    {/* Sinopse da Série */}
+                    <Text style={styles.heroPlot} numberOfLines={2}>
+                      {heroSeries.plot || 'Uma história envolvente e emocionante repleta de reviravoltas imperdíveis.'}
+                    </Text>
+                  </LinearGradient>
+                </View>
+              )}
             </View>
           ) : null}
 
-          {/* Seção com Carrossel de Cards (Imagem 1) */}
+          {/* Seção com Carrossel de Cards e Ação Ver Todos */}
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionTitleBox}>
               <Text style={styles.sectionTitle}>{selectedCategoryName}</Text>
@@ -575,10 +690,27 @@ export default function SeriesScreen() {
                 <Text style={styles.sectionCountText}>{filteredSeries.length}</Text>
               </View>
             </View>
-            <View style={styles.seeAllBtn}>
+            <Pressable
+              style={styles.seeAllBtn}
+              onPress={() => {
+                router.push({
+                  pathname: '/search',
+                  params: {
+                    initialType: 'series',
+                    categoryId: selectedCategory === 'for_you' ? 'all' : selectedCategory,
+                    categoryName: selectedCategoryName,
+                  },
+                });
+              }}
+              hitSlop={8}
+            >
               <Text style={styles.seeAllText}>Ver todos</Text>
-              <Ionicons name="chevron-forward" size={14} color="#FFA000" />
-            </View>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={colors.primary}
+              />
+            </Pressable>
           </View>
 
           {loadingSeries ? (
@@ -657,10 +789,10 @@ export default function SeriesScreen() {
                 {filteredSeries.slice(10, 25).map((item) => (
                   <FocusableItem
                     key={item.series_id}
-                    style={styles.gridCardItem}
+                    style={[styles.gridCardItem, { width: gridCardWidth }]}
                     onPress={() => handleSeriesClick(item)}
                   >
-                    <View style={styles.gridPosterBox}>
+                    <View style={[styles.gridPosterBox, { width: '100%', height: gridCardWidth * 1.5 }]}>
                       {item.cover ? (
                         <Image
                           source={{ uri: item.cover }}
@@ -761,7 +893,7 @@ export default function SeriesScreen() {
                   onPress={() => selectedSeries && handleWatchFirstEpisode(selectedSeries)}
                 >
                   <LinearGradient
-                    colors={['#FF6A00', '#FFA000']}
+                    colors={['#00E5FF', '#A855F7']}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
                     style={styles.detailWatchGradient}
@@ -1166,7 +1298,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 2.5,
-    backgroundColor: '#FFA000',
+    backgroundColor: colors.primary,
     borderRadius: 2,
   },
 
@@ -1190,6 +1322,77 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#121217',
     position: 'relative',
+  },
+  heroCardLandscape: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#14141c',
+    borderRadius: 20,
+    padding: 16,
+    gap: 20,
+    borderWidth: 1,
+    borderColor: '#242430',
+  },
+  heroLandscapePosterBox: {
+    width: 140,
+    height: 205,
+    borderRadius: 14,
+    backgroundColor: '#181822',
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  heroLandscapePoster: {
+    width: '100%',
+    height: '100%',
+  },
+  heroLandscapeRatingBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  heroLandscapeRatingText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  heroLandscapeInfo: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 8,
+  },
+  heroLandscapeTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#fff',
+    lineHeight: 26,
+  },
+  heroLandscapeMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  heroLandscapePlot: {
+    color: '#aaa',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  heroLandscapeActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
   },
   heroImage: {
     width: '100%',
@@ -1332,7 +1535,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   seeAllText: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1407,7 +1610,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   gridCardItem: {
-    width: (width - 32 - 12) / 2,
     marginBottom: 8,
   },
   gridPosterBox: {
@@ -1668,7 +1870,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 3,
-    backgroundColor: '#FF6A00',
+    backgroundColor: colors.primary,
     borderRadius: 2,
   },
   episodesTabContent: {

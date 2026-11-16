@@ -16,6 +16,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import * as NavigationBar from 'expo-navigation-bar';
+import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors } from '../../src/theme/colors';
@@ -102,12 +103,14 @@ export default function PlayerScreen() {
 
   // Fullscreen Immersive Mode: Hides Android status bar and system buttons (Back/Home/Recents)
   useEffect(() => {
+    StatusBar.setHidden(true, 'none');
     if (Platform.OS === 'android') {
       try {
         NavigationBar.setVisibilityAsync('hidden');
       } catch (e) {}
     }
     return () => {
+      StatusBar.setHidden(false, 'none');
       if (Platform.OS === 'android') {
         try {
           NavigationBar.setVisibilityAsync('visible');
@@ -414,7 +417,7 @@ export default function PlayerScreen() {
 
   return (
     <View style={styles.container} {...panResponder.panHandlers}>
-      <StatusBar hidden={true} />
+      <ExpoStatusBar hidden={true} style="light" />
 
       {/* Video Surface */}
       {streamUrl ? (
@@ -451,7 +454,7 @@ export default function PlayerScreen() {
                 : 'volume-high'
             }
             size={36}
-            color="#FFA000"
+            color={colors.primary}
           />
           <Text style={styles.gestureIndicatorText}>
             {gestureIndicator.type === 'brightness' ? 'Brilho' : 'Volume'}
@@ -752,10 +755,10 @@ const styles = StyleSheet.create({
   },
   gestureProgressBarFill: {
     height: '100%',
-    backgroundColor: '#FFA000',
+    backgroundColor: colors.primary,
   },
   gestureIndicatorPercent: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 13,
     fontWeight: '800',
   },
@@ -826,7 +829,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   channelSubtitle: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 12,
     fontWeight: '700',
     marginTop: 2,
@@ -881,10 +884,10 @@ const styles = StyleSheet.create({
   timelineFill: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#FFA000',
+    backgroundColor: colors.primary,
   },
   liveIndicatorText: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 11,
     fontWeight: '800',
   },
@@ -949,9 +952,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   drawerItemActive: {
-    backgroundColor: '#221b18',
+    backgroundColor: '#162035',
     borderLeftWidth: 3,
-    borderLeftColor: '#FFA000',
+    borderLeftColor: colors.primary,
   },
   drawerItemNum: {
     color: '#777',
@@ -965,7 +968,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   drawerItemNameActive: {
-    color: '#FFA000',
+    color: colors.primary,
     fontWeight: '800',
   },
   epgModalBackdrop: {
@@ -1015,7 +1018,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1e1e28',
   },
   epgTime: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 11,
     fontWeight: '700',
   },

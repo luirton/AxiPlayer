@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Pressable,
   Dimensions,
+  useWindowDimensions,
   ScrollView,
   Platform,
   PanResponder,
@@ -14,11 +15,13 @@ import {
   Alert,
   FlatList,
   RefreshControl,
+  StatusBar as RNStatusBar,
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import * as NavigationBar from 'expo-navigation-bar';
+import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme/colors';
 import { storage } from '../../src/services/storage';
@@ -28,11 +31,12 @@ import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { uiState } from '../../src/services/uiState';
 import { isAdultCategory } from '../../src/services/parentalControl';
 
-const { width, height } = Dimensions.get('window');
 const FAVORITES_CAT_ID = 'favorites_category';
 
 export default function LiveScreen() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const params = useLocalSearchParams<{ channelId?: string; autoFullscreen?: string }>();
   const [categories, setCategories] = useState<IptvCategory[]>([]);
   const [channelsByCategory, setChannelsByCategory] = useState<Record<string, LiveChannel[]>>({});
@@ -40,6 +44,8 @@ export default function LiveScreen() {
   const [activeChannel, setActiveChannel] = useState<LiveChannel | null>(null);
   const [streamUrl, setStreamUrl] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [allChannels, setAllChannels] = useState<LiveChannel[]>([]);
+  const [isSearchingChannels, setIsSearchingChannels] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [loadingCategory, setLoadingCategory] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -124,6 +130,7 @@ export default function LiveScreen() {
       return () => {
         // Leaving live tab
         uiState.setFullscreen(false);
+        RNStatusBar.setHidden(false, 'none');
         if (miniPlayer) {
           try {
             miniPlayer.pause();
@@ -148,6 +155,19 @@ export default function LiveScreen() {
       handleDirectChannelParam(Number(params.channelId));
     }
   }, [params.channelId, account]);
+
+  useEffect(() => {
+    if (searchQuery.trim().length > 0 && allChannels.length === 0 && account) {
+      setIsSearchingChannels(true);
+      const client = new XtreamClient(account.serverUrl, account.username, account.password);
+      client.getLiveStreams()
+        .then((chs) => {
+          if (Array.isArray(chs)) setAllChannels(chs);
+        })
+        .catch((e) => console.warn('Erro ao carregar canais para busca:', e))
+        .finally(() => setIsSearchingChannels(false));
+    }
+  }, [searchQuery, allChannels, account]);
 
   const handleDirectChannelParam = async (channelId: number) => {
     if (!account) return;
@@ -197,6 +217,11 @@ export default function LiveScreen() {
         ];
       }
       setCategories(finalCats);
+
+      // Carrega canais em background para busca instantânea por canais
+      client.getLiveStreams().then((allChs) => {
+        if (Array.isArray(allChs)) setAllChannels(allChs);
+      }).catch(() => {});
 
       // Preload channels (NUNCA carrega canal ou categoria adulta automaticamente)
       if (favChs && favChs.length > 0) {
@@ -424,6 +449,7 @@ export default function LiveScreen() {
     setIsFullscreen(true);
     uiState.setFullscreen(true);
     resetControlsTimer();
+    RNStatusBar.setHidden(true, 'none');
     if (Platform.OS === 'android') {
       try {
         NavigationBar.setVisibilityAsync('hidden');
@@ -436,6 +462,7 @@ export default function LiveScreen() {
     uiState.setFullscreen(false);
     setChannelDrawerOpen(false);
     setEpgModalOpen(false);
+    RNStatusBar.setHidden(false, 'none');
     if (Platform.OS === 'android') {
       try {
         NavigationBar.setVisibilityAsync('visible');
@@ -563,12 +590,18 @@ export default function LiveScreen() {
     );
   };
 
-  const filteredCategories = categories.filter((cat) =>
-    (cat.category_name || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const searchedChannels = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const pool = allChannels.length > 0
+      ? allChannels
+      : Object.values(channelsByCategory).flat();
+    return pool.filter((ch) => (ch.name || '').toLowerCase().includes(q));
+  }, [searchQuery, allChannels, channelsByCategory]);
 
   return (
     <View style={styles.container}>
+      <StatusBar hidden={isFullscreen} style="light" />
       {/* Top Search Bar (Hidden when in Fullscreen) */}
       {!isFullscreen && (
         <View style={styles.searchHeader}>
@@ -576,19 +609,81 @@ export default function LiveScreen() {
           <View style={styles.searchBox}>
             <TextInput
               style={styles.searchInput}
-              placeholder="Buscar canais"
+              placeholder="Buscar canais..."
               placeholderTextColor="#777"
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
-            <Ionicons name="search" size={20} color="#888" />
+            {searchQuery.length > 0 ? (
+              <Pressable onPress={() => setSearchQuery('')} hitSlop={10}>
+                <Ionicons name="close-circle" size={18} color="#888" />
+              </Pressable>
+            ) : (
+              <Ionicons name="search" size={20} color="#888" />
+            )}
           </View>
         </View>
       )}
 
-      {/* Accordion Categories List (Hidden when in Fullscreen) */}
+      {/* Mini Player Fixo no Topo (Não rola junto com as categorias) */}
+      {!isFullscreen && activeChannel ? (
+        <View style={styles.miniPlayerContainer}>
+          <Pressable
+            style={[styles.miniVideoBox, isLandscape && styles.miniVideoBoxLandscape]}
+            onPress={handleOpenFullscreen}
+          >
+            {streamUrl ? (
+              <VideoView
+                style={styles.video}
+                player={miniPlayer}
+                contentFit="contain"
+                nativeControls={false}
+              />
+            ) : (
+              <ActivityIndicator color={colors.primary} size="large" />
+            )}
+
+            {/* Top Video Header Overlay */}
+            <View style={styles.videoHeaderOverlay}>
+              <View style={styles.liveTag}>
+                <Text style={styles.liveTagText}>AO VIVO</Text>
+              </View>
+              <Text style={styles.videoTitle} numberOfLines={1}>
+                {activeChannel.num ? `${activeChannel.num} - ` : ''}{activeChannel.name}
+              </Text>
+            </View>
+
+            {/* Bottom Mini Player Controls Overlay */}
+            <View style={styles.videoControlsOverlay}>
+              <Pressable style={styles.miniControlBtn} onPress={handleCastToTv}>
+                <Ionicons name="tv-outline" size={20} color="#fff" />
+              </Pressable>
+
+              <Pressable
+                style={styles.miniControlBtn}
+                onPress={() => handleToggleFavorite(activeChannel)}
+              >
+                <Ionicons
+                  name={favorites.includes(activeChannel.stream_id) ? 'star' : 'star-outline'}
+                  size={20}
+                  color={favorites.includes(activeChannel.stream_id) ? '#FFD700' : '#fff'}
+                />
+              </Pressable>
+
+              {/* Redimensionar de pequeno para grande in-place! */}
+              <Pressable style={styles.fullscreenBtn} onPress={handleOpenFullscreen}>
+                <Ionicons name="scan-outline" size={16} color="#fff" />
+                <Text style={styles.fullscreenBtnText}>Abrir</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Rolagem Somente das Categorias / Resultados de Canais */}
       {!isFullscreen && (
         <ScrollView
+          style={styles.categoriesScrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -600,60 +695,85 @@ export default function LiveScreen() {
             />
           }
         >
-          {/* Mini Player Section on Top */}
-          {activeChannel ? (
-            <View style={styles.miniPlayerContainer}>
-              <Pressable style={styles.miniVideoBox} onPress={handleOpenFullscreen}>
-                {streamUrl ? (
-                  <VideoView
-                    style={styles.video}
-                    player={miniPlayer}
-                    contentFit="contain"
-                    nativeControls={false}
-                  />
-                ) : (
-                  <ActivityIndicator color={colors.primary} size="large" />
-                )}
+          {searchQuery.trim().length > 0 ? (
+            /* Modo Busca por Canais (Item 7) */
+            <View style={styles.searchChannelsContainer}>
+              <View style={styles.searchChannelsHeader}>
+                <Text style={styles.searchChannelsTitle}>Canais encontrados</Text>
+                <View style={styles.searchCountBadge}>
+                  <Text style={styles.searchCountText}>{searchedChannels.length}</Text>
+                </View>
+              </View>
 
-                {/* Top Video Header Overlay */}
-                <View style={styles.videoHeaderOverlay}>
-                  <View style={styles.liveTag}>
-                    <Text style={styles.liveTagText}>AO VIVO</Text>
-                  </View>
-                  <Text style={styles.videoTitle} numberOfLines={1}>
-                    {activeChannel.num ? `${activeChannel.num} - ` : ''}{activeChannel.name}
+              {isSearchingChannels ? (
+                <View style={styles.centerBox}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.loadingText}>Pesquisando canais...</Text>
+                </View>
+              ) : searchedChannels.length === 0 ? (
+                <View style={styles.emptyLiveCard}>
+                  <Ionicons name="search-outline" size={48} color={colors.textMuted} />
+                  <Text style={styles.emptyLiveTitle}>Nenhum canal encontrado</Text>
+                  <Text style={styles.emptyLiveDesc}>
+                    Nenhum canal corresponde a "{searchQuery}".
                   </Text>
                 </View>
+              ) : (
+                <View style={styles.searchedChannelsList}>
+                  {searchedChannels.map((ch, idx) => {
+                    const isChannelActive = activeChannel?.stream_id === ch.stream_id;
+                    const isFav = favorites.includes(ch.stream_id);
 
-                {/* Bottom Mini Player Controls Overlay */}
-                <View style={styles.videoControlsOverlay}>
-                  <Pressable style={styles.miniControlBtn} onPress={handleCastToTv}>
-                    <Ionicons name="tv-outline" size={20} color="#fff" />
-                  </Pressable>
+                    return (
+                      <Pressable
+                        key={ch.stream_id}
+                        style={[styles.channelRow, isChannelActive && styles.channelRowActive]}
+                        onPress={() => selectChannelForPlayer(ch)}
+                      >
+                        <Text style={styles.channelNum}>
+                          {ch.num || idx + 1}
+                        </Text>
 
-                  <Pressable
-                    style={styles.miniControlBtn}
-                    onPress={() => handleToggleFavorite(activeChannel)}
-                  >
-                    <Ionicons
-                      name={favorites.includes(activeChannel.stream_id) ? 'star' : 'star-outline'}
-                      size={20}
-                      color={favorites.includes(activeChannel.stream_id) ? '#FFD700' : '#fff'}
-                    />
-                  </Pressable>
+                        <View style={styles.channelLogoWrapper}>
+                          {ch.stream_icon ? (
+                            <Image
+                              source={{ uri: ch.stream_icon }}
+                              style={styles.channelLogo}
+                              contentFit="contain"
+                            />
+                          ) : (
+                            <Ionicons name="tv" size={18} color="#666" />
+                          )}
+                        </View>
 
-                  {/* Redimensionar de pequeno para grande in-place! */}
-                  <Pressable style={styles.fullscreenBtn} onPress={handleOpenFullscreen}>
-                    <Ionicons name="scan-outline" size={16} color="#fff" />
-                    <Text style={styles.fullscreenBtnText}>Abrir</Text>
-                  </Pressable>
+                        <Text
+                          style={[styles.channelRowName, isChannelActive && styles.channelRowNameActive]}
+                          numberOfLines={1}
+                        >
+                          {ch.name}
+                        </Text>
+
+                        <Pressable
+                          style={styles.starBtn}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleToggleFavorite(ch);
+                          }}
+                          hitSlop={8}
+                        >
+                          <Ionicons
+                            name={isFav ? 'star' : 'star-outline'}
+                            size={18}
+                            color={isFav ? '#FFD700' : '#666'}
+                          />
+                        </Pressable>
+                      </Pressable>
+                    );
+                  })}
                 </View>
-              </Pressable>
+              )}
             </View>
-          ) : null}
-
-          {/* Expandable Accordion Categories List */}
-          {loading ? (
+          ) : loading ? (
             <View style={styles.centerBox}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={styles.loadingText}>Carregando categorias...</Text>
@@ -676,12 +796,12 @@ export default function LiveScreen() {
                 </FocusableItem>
               </View>
             </View>
-          ) : filteredCategories.length === 0 ? (
+          ) : categories.length === 0 ? (
             <View style={styles.emptyLiveCard}>
               <Ionicons name="tv-outline" size={48} color={colors.textMuted} />
-              <Text style={styles.emptyLiveTitle}>Nenhum canal encontrado</Text>
+              <Text style={styles.emptyLiveTitle}>Nenhuma categoria encontrada</Text>
               <Text style={styles.emptyLiveDesc}>
-                {searchQuery ? 'Nenhum canal corresponde à sua busca.' : 'O servidor não retornou categorias de canais.'}
+                O servidor não retornou categorias de canais.
               </Text>
               <FocusableItem style={styles.retryLiveBtn} onPress={() => initLive(true)}>
                 <Ionicons name="refresh" size={16} color="#fff" />
@@ -690,7 +810,7 @@ export default function LiveScreen() {
             </View>
           ) : (
             <View style={styles.accordionContainer}>
-              {filteredCategories.map((cat) => {
+              {categories.map((cat) => {
                 const isOpen = openCategory === cat.category_id;
                 const catChannels = channelsByCategory[cat.category_id] || [];
                 const isAdult = isAdultCategory(cat.category_name);
@@ -847,7 +967,7 @@ export default function LiveScreen() {
                     : 'volume-high'
                 }
                 size={34}
-                color="#FFA000"
+                color={colors.primary}
               />
               <Text style={styles.gestureIndicatorText}>
                 {gestureIndicator.type === 'brightness' ? 'Brilho' : 'Volume'}{' '}
@@ -1020,7 +1140,7 @@ export default function LiveScreen() {
                         <Text style={[styles.drawerItemName, isCur && styles.drawerItemNameActive]} numberOfLines={1}>
                           {item.name}
                         </Text>
-                        {isCur && <Ionicons name="volume-high" size={18} color="#FFA000" />}
+                        {isCur && <Ionicons name="volume-high" size={18} color={colors.primary} />}
                       </Pressable>
                     );
                   }}
@@ -1092,13 +1212,13 @@ export default function LiveScreen() {
         <View style={styles.pinModalBackdrop}>
           <View style={styles.pinModalCard}>
             <View style={styles.pinIconBox}>
-              <Ionicons name="lock-closed" size={32} color="#F5A623" />
+              <Ionicons name="lock-closed" size={32} color={colors.primary} />
             </View>
 
             <Text style={styles.pinModalTitle}>Controle Parental</Text>
             <Text style={styles.pinModalSubtitle}>
               A categoria{' '}
-              <Text style={{ color: '#F5A623', fontWeight: 'bold' }}>
+              <Text style={{ color: colors.primary, fontWeight: 'bold' }}>
                 {targetAdultCategory?.category_name}
               </Text>{' '}
               é protegida. Digite seu PIN de 4 dígitos para acessar.
@@ -1157,7 +1277,7 @@ export default function LiveScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0c',
+    backgroundColor: colors.background,
     paddingTop: Platform.OS === 'android' ? 36 : 48,
   },
   searchHeader: {
@@ -1171,12 +1291,12 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16161d',
+    backgroundColor: '#101628',
     borderRadius: 24,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#242430',
+    borderColor: '#1E2845',
   },
   searchInput: {
     flex: 1,
@@ -1186,9 +1306,12 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 110,
   },
+  categoriesScrollView: {
+    flex: 1,
+  },
   miniPlayerContainer: {
     paddingHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   miniVideoBox: {
     width: '100%',
@@ -1201,6 +1324,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#222',
+  },
+  miniVideoBoxLandscape: {
+    height: 165,
+  },
+  searchChannelsContainer: {
+    paddingHorizontal: 16,
+  },
+  searchChannelsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  searchChannelsTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  searchCountBadge: {
+    backgroundColor: '#20202c',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  searchCountText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  searchedChannelsList: {
+    backgroundColor: '#121218',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#20202a',
+    overflow: 'hidden',
   },
   video: {
     width: '100%',
@@ -1271,11 +1429,11 @@ const styles = StyleSheet.create({
   },
   accordionItem: {
     borderBottomWidth: 1,
-    borderBottomColor: '#16161e',
-    backgroundColor: '#0a0a0c',
+    borderBottomColor: '#161F33',
+    backgroundColor: colors.background,
   },
   accordionItemOpen: {
-    backgroundColor: '#121217',
+    backgroundColor: '#0E1424',
   },
   categoryHeader: {
     flexDirection: 'row',
@@ -1301,7 +1459,7 @@ const styles = StyleSheet.create({
     color: '#FFD700',
   },
   categoryTitleAdult: {
-    color: '#FF8A65',
+    color: colors.secondary,
   },
   categoryCount: {
     fontSize: 12,
@@ -1321,15 +1479,15 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#202028',
+    backgroundColor: '#151C30',
     alignItems: 'center',
     justifyContent: 'center',
   },
   chevronCircleOpen: {
-    backgroundColor: '#F5A623',
+    backgroundColor: colors.primary,
   },
   channelsExpandedBox: {
-    backgroundColor: '#0e0e13',
+    backgroundColor: '#0A0E1A',
     paddingVertical: 6,
   },
   loadingChannelsBox: {
@@ -1349,11 +1507,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#14141c',
+    borderBottomColor: '#141A2E',
     gap: 12,
   },
   channelRowActive: {
-    backgroundColor: '#1e1c24',
+    backgroundColor: '#141D33',
   },
   channelNum: {
     fontSize: 12,
@@ -1381,7 +1539,7 @@ const styles = StyleSheet.create({
     color: '#ccc',
   },
   channelRowNameActive: {
-    color: '#F5A623',
+    color: colors.primary,
   },
   starBtn: {
     padding: 6,
@@ -1448,7 +1606,7 @@ const styles = StyleSheet.create({
   },
   gestureBarFill: {
     height: '100%',
-    backgroundColor: '#FFA000',
+    backgroundColor: colors.primary,
   },
   gestureLayer: {
     position: 'absolute',
@@ -1499,7 +1657,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   fsProgramName: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 12,
     fontWeight: '600',
     marginTop: 2,
@@ -1542,11 +1700,11 @@ const styles = StyleSheet.create({
   fsTimelineBar: {
     flex: 1,
     height: 3,
-    backgroundColor: '#FFA000',
+    backgroundColor: colors.primary,
     borderRadius: 2,
   },
   fsLiveTagRight: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1584,7 +1742,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   drawerSheet: {
-    width: Math.min(320, width * 0.8),
+    width: '75%',
+    maxWidth: 320,
     backgroundColor: '#121217',
     paddingTop: 40,
     paddingHorizontal: 16,
@@ -1630,7 +1789,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   drawerItemNameActive: {
-    color: '#FFA000',
+    color: colors.primary,
     fontWeight: '800',
   },
   epgEmptyBox: {
@@ -1650,7 +1809,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1e1e28',
   },
   epgTime: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 12,
     fontWeight: '700',
     marginBottom: 4,
@@ -1827,7 +1986,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pinConfirmBtnActive: {
-    backgroundColor: '#F5A623',
+    backgroundColor: colors.primary,
   },
   pinConfirmBtnText: {
     color: '#000',

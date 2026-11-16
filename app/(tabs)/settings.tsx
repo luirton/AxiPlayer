@@ -27,8 +27,6 @@ import {
   openAppSettings,
 } from '../../src/services/permissions';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 export default function SettingsScreen() {
   const router = useRouter();
   const [account, setAccount] = useState<SavedAccount | null>(null);
@@ -433,7 +431,7 @@ export default function SettingsScreen() {
           onPress={() => handleOpenListManager('watchlater')}
         >
           <View style={styles.settingIcon}>
-            <Ionicons name="time" size={20} color="#FF6A00" />
+            <Ionicons name="time" size={20} color={colors.primary} />
           </View>
           <View style={styles.settingDetails}>
             <Text style={styles.settingTitle}>Assistir Depois</Text>
@@ -700,7 +698,7 @@ export default function SettingsScreen() {
                     ? '#FFD700'
                     : listManagerTab === 'mylist'
                     ? colors.primary
-                    : '#FF6A00'
+                    : colors.secondary
                 }
               />
               <Text style={styles.managerHeaderTitle}>
@@ -775,7 +773,7 @@ export default function SettingsScreen() {
               <Ionicons
                 name="time"
                 size={14}
-                color={listManagerTab === 'watchlater' ? '#FF6A00' : '#888'}
+                color={listManagerTab === 'watchlater' ? colors.primary : '#888'}
               />
               <Text
                 style={[
@@ -917,7 +915,7 @@ export default function SettingsScreen() {
                         item.type === 'live'
                           ? { backgroundColor: '#E50914' }
                           : item.type === 'movie'
-                          ? { backgroundColor: '#FF6A00' }
+                          ? { backgroundColor: colors.primary }
                           : { backgroundColor: '#3B82F6' },
                       ]}
                     >
@@ -1434,7 +1432,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#FF6A00',
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },

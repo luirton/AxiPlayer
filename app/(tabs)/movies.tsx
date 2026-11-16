@@ -6,7 +6,7 @@ import {
   FlatList,
   TextInput,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   Pressable,
   ScrollView,
   Modal,
@@ -22,10 +22,12 @@ import { IptvCategory, VodMovie, SavedAccount } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { isAdultCategory } from '../../src/services/parentalControl';
 
-const { width } = Dimensions.get('window');
-
 export default function MoviesScreen() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const numGridColumns = isLandscape ? 5 : 3;
+  const gridCardWidth = (width - 32 - (numGridColumns - 1) * 12) / numGridColumns;
   const params = useLocalSearchParams<{
     brand?: string;
     brandName?: string;
@@ -47,6 +49,12 @@ export default function MoviesScreen() {
 
   // Hero Item
   const [heroMovie, setHeroMovie] = useState<VodMovie | null>(null);
+
+  const pickRandomMovie = (list: VodMovie[]) => {
+    if (!list || list.length === 0) return null;
+    const pool = list.slice(0, Math.min(list.length, 30));
+    return pool[Math.floor(Math.random() * pool.length)] || list[0];
+  };
 
   // Movie Details Modal State (Fiel à Imagem 1)
   const [selectedMovie, setSelectedMovie] = useState<VodMovie | null>(null);
@@ -130,21 +138,21 @@ export default function MoviesScreen() {
           setSelectedBrandName(params.brandName || matchingCat.category_name);
           const vods = await client.getVodStreams(matchingCat.category_id);
           setMovies(vods || []);
-          if (vods && vods.length > 0) setHeroMovie(vods[0]);
+          if (vods && vods.length > 0) setHeroMovie(pickRandomMovie(vods));
           return;
         }
       }
 
-      // Carga inicial: Categoria padrão ou primeira categoria
+      // Carga inicial: Categoria padrão ou primeira categoria com seleção aleatória do Hero
       if (cats && cats.length > 0) {
         const firstCatId = cats[0].category_id;
         const vods = await client.getVodStreams(firstCatId);
         setMovies(vods || []);
-        if (vods && vods.length > 0) setHeroMovie(vods[0]);
+        if (vods && vods.length > 0) setHeroMovie(pickRandomMovie(vods));
       } else {
         const vods = await client.getVodStreams();
         setMovies(vods || []);
-        if (vods && vods.length > 0) setHeroMovie(vods[0]);
+        if (vods && vods.length > 0) setHeroMovie(pickRandomMovie(vods));
       }
     } catch (err: any) {
       console.warn('Error loading movies:', err);
@@ -164,7 +172,7 @@ export default function MoviesScreen() {
         const favMovies = await storage.getFavoriteMovies();
         setMovies(favMovies || []);
         if (favMovies && favMovies.length > 0) {
-          setHeroMovie(favMovies[0]);
+          setHeroMovie(pickRandomMovie(favMovies));
         }
         return;
       }
@@ -172,11 +180,13 @@ export default function MoviesScreen() {
       const client = new XtreamClient(account.serverUrl, account.username, account.password);
       const vods = catId === 'for_you'
         ? (categories.length > 0 ? await client.getVodStreams(categories[0].category_id) : await client.getVodStreams())
+        : catId === 'all'
+        ? await client.getVodStreams()
         : await client.getVodStreams(catId);
 
       setMovies(vods || []);
       if (vods && vods.length > 0) {
-        setHeroMovie(vods[0]);
+        setHeroMovie(pickRandomMovie(vods));
       }
     } catch (err) {
       console.warn(err);
@@ -403,6 +413,25 @@ export default function MoviesScreen() {
             {selectedCategory === 'for_you' && <View style={styles.activeTabIndicator} />}
           </Pressable>
 
+          {/* Aba: Todos os Filmes (Abre diretamente na tela de catálogo completo com paginação) */}
+          <Pressable
+            style={styles.categoryTabItem}
+            onPress={() => {
+              router.push({
+                pathname: '/search',
+                params: {
+                  initialType: 'movies',
+                  categoryId: 'all',
+                  categoryName: 'Todos os Filmes',
+                },
+              });
+            }}
+          >
+            <Text style={styles.categoryTabText}>
+              Todos os Filmes
+            </Text>
+          </Pressable>
+
           {/* Aba: Meus Favoritos */}
           <Pressable
             style={[styles.categoryTabItem, selectedCategory === 'favorites' && styles.categoryTabItemActive]}
@@ -455,81 +484,158 @@ export default function MoviesScreen() {
           contentContainerStyle={styles.mainScrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Hero Banner em Destaque (Fiel à Imagem 1) */}
+          {/* Hero Banner em Destaque */}
           {heroMovie ? (
             <View style={styles.heroContainer}>
-              <View style={styles.heroCard}>
-                {heroMovie.stream_icon ? (
-                  <Image
-                    source={{ uri: heroMovie.stream_icon }}
-                    style={styles.heroImage}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View style={styles.heroFallback}>
-                    <Ionicons name="film" size={64} color="#333" />
-                  </View>
-                )}
-
-                <LinearGradient
-                  colors={['transparent', 'rgba(10,10,12,0.4)', 'rgba(10,10,12,0.98)']}
-                  style={styles.heroGradient}
-                >
-                  <Text style={styles.heroTitle} numberOfLines={2}>
-                    {heroMovie.name}
-                  </Text>
-
-                  {/* Metadados: Nota, Ano, Formato */}
-                  <View style={styles.heroMetaRow}>
-                    <View style={styles.metaRatingBox}>
-                      <Ionicons name="star" size={12} color="#FFD700" />
-                      <Text style={styles.metaRatingText}>{heroRating !== '0' ? heroRating : '8.5'}</Text>
-                    </View>
-                    <Text style={styles.metaDot}>•</Text>
-                    <Text style={styles.metaText}>{heroMovie.added ? new Date(Number(heroMovie.added) * 1000).getFullYear() || '2025' : '2025'}</Text>
-                    <Text style={styles.metaDot}>•</Text>
-                    <Text style={styles.metaText}>{heroMovie.container_extension?.toUpperCase() || 'HD'}</Text>
-                  </View>
-
-                  {/* Botões de Ação: Assistir Agora e Favoritar */}
-                  <View style={styles.heroActionsRow}>
-                    <FocusableItem
-                      style={styles.heroWatchBtn}
-                      onPress={() => handlePlayMovie(heroMovie)}
-                    >
-                      <LinearGradient
-                        colors={['#FF6A00', '#FFA000']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.heroWatchGradient}
-                      >
-                        <Ionicons name="play" size={16} color="#000" />
-                        <Text style={styles.heroWatchText}>Assistir agora</Text>
-                      </LinearGradient>
-                    </FocusableItem>
-
-                    <Pressable
-                      style={styles.heroFavBtn}
-                      onPress={() => handleToggleFavoriteMovie(heroMovie)}
-                    >
-                      <Ionicons
-                        name={movieFavorites.includes(heroMovie.stream_id) ? 'star' : 'star-outline'}
-                        size={20}
-                        color={movieFavorites.includes(heroMovie.stream_id) ? '#FFD700' : '#fff'}
+              {isLandscape ? (
+                <View style={styles.heroCardLandscape}>
+                  {/* Pôster estilo Filmes Recentes no lado esquerdo */}
+                  <View style={styles.heroLandscapePosterBox}>
+                    {heroMovie.stream_icon ? (
+                      <Image
+                        source={{ uri: heroMovie.stream_icon }}
+                        style={styles.heroLandscapePoster}
+                        contentFit="cover"
                       />
-                    </Pressable>
+                    ) : (
+                      <View style={styles.heroFallback}>
+                        <Ionicons name="film" size={48} color="#555" />
+                      </View>
+                    )}
+                    {heroRating !== '0' ? (
+                      <View style={styles.heroLandscapeRatingBadge}>
+                        <Ionicons name="star" size={11} color="#FFD700" />
+                        <Text style={styles.heroLandscapeRatingText}>{heroRating}</Text>
+                      </View>
+                    ) : null}
                   </View>
 
-                  {/* Sinopse / Descrição do Filme */}
-                  <Text style={styles.heroPlot} numberOfLines={2}>
-                    {heroMovie.name ? `Assista agora a "${heroMovie.name}" com áudio e imagem de alta fidelidade.` : 'Filme completo em alta resolução.'}
-                  </Text>
-                </LinearGradient>
-              </View>
+                  {/* Informações ao lado */}
+                  <View style={styles.heroLandscapeInfo}>
+                    <Text style={styles.heroLandscapeTitle} numberOfLines={2}>
+                      {heroMovie.name}
+                    </Text>
+
+                    <View style={styles.heroLandscapeMetaRow}>
+                      <View style={styles.metaRatingBox}>
+                        <Ionicons name="star" size={12} color="#FFD700" />
+                        <Text style={styles.metaRatingText}>{heroRating !== '0' ? heroRating : '8.5'}</Text>
+                      </View>
+                      <Text style={styles.metaDot}>•</Text>
+                      <Text style={styles.metaText}>
+                        {heroMovie.added ? new Date(Number(heroMovie.added) * 1000).getFullYear() || '2025' : '2025'}
+                      </Text>
+                      <Text style={styles.metaDot}>•</Text>
+                      <Text style={styles.metaText}>{heroMovie.container_extension?.toUpperCase() || 'HD'}</Text>
+                    </View>
+
+                    <Text style={styles.heroLandscapePlot} numberOfLines={2}>
+                      {heroMovie.name ? `Assista agora a "${heroMovie.name}" com áudio e imagem de alta fidelidade.` : 'Filme completo em alta resolução.'}
+                    </Text>
+
+                    <View style={styles.heroLandscapeActionsRow}>
+                      <FocusableItem
+                        style={styles.heroWatchBtn}
+                        onPress={() => handlePlayMovie(heroMovie)}
+                      >
+                        <LinearGradient
+                          colors={['#00E5FF', '#A855F7']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.heroWatchGradient}
+                        >
+                          <Ionicons name="play" size={16} color="#000" />
+                          <Text style={styles.heroWatchText}>Assistir agora</Text>
+                        </LinearGradient>
+                      </FocusableItem>
+
+                      <Pressable
+                        style={styles.heroFavBtn}
+                        onPress={() => handleToggleFavoriteMovie(heroMovie)}
+                      >
+                        <Ionicons
+                          name={movieFavorites.includes(heroMovie.stream_id) ? 'star' : 'star-outline'}
+                          size={20}
+                          color={movieFavorites.includes(heroMovie.stream_id) ? '#FFD700' : '#fff'}
+                        />
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.heroCard}>
+                  {heroMovie.stream_icon ? (
+                    <Image
+                      source={{ uri: heroMovie.stream_icon }}
+                      style={styles.heroImage}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={styles.heroFallback}>
+                      <Ionicons name="film" size={64} color="#333" />
+                    </View>
+                  )}
+
+                  <LinearGradient
+                    colors={['transparent', 'rgba(10,10,12,0.4)', 'rgba(10,10,12,0.98)']}
+                    style={styles.heroGradient}
+                  >
+                    <Text style={styles.heroTitle} numberOfLines={2}>
+                      {heroMovie.name}
+                    </Text>
+
+                    {/* Metadados: Nota, Ano, Formato */}
+                    <View style={styles.heroMetaRow}>
+                      <View style={styles.metaRatingBox}>
+                        <Ionicons name="star" size={12} color="#FFD700" />
+                        <Text style={styles.metaRatingText}>{heroRating !== '0' ? heroRating : '8.5'}</Text>
+                      </View>
+                      <Text style={styles.metaDot}>•</Text>
+                      <Text style={styles.metaText}>{heroMovie.added ? new Date(Number(heroMovie.added) * 1000).getFullYear() || '2025' : '2025'}</Text>
+                      <Text style={styles.metaDot}>•</Text>
+                      <Text style={styles.metaText}>{heroMovie.container_extension?.toUpperCase() || 'HD'}</Text>
+                    </View>
+
+                    {/* Botões de Ação: Assistir Agora e Favoritar */}
+                    <View style={styles.heroActionsRow}>
+                      <FocusableItem
+                        style={styles.heroWatchBtn}
+                        onPress={() => handlePlayMovie(heroMovie)}
+                      >
+                        <LinearGradient
+                          colors={['#00E5FF', '#A855F7']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.heroWatchGradient}
+                        >
+                          <Ionicons name="play" size={16} color="#000" />
+                          <Text style={styles.heroWatchText}>Assistir agora</Text>
+                        </LinearGradient>
+                      </FocusableItem>
+
+                      <Pressable
+                        style={styles.heroFavBtn}
+                        onPress={() => handleToggleFavoriteMovie(heroMovie)}
+                      >
+                        <Ionicons
+                          name={movieFavorites.includes(heroMovie.stream_id) ? 'star' : 'star-outline'}
+                          size={20}
+                          color={movieFavorites.includes(heroMovie.stream_id) ? '#FFD700' : '#fff'}
+                        />
+                      </Pressable>
+                    </View>
+
+                    {/* Sinopse / Descrição do Filme */}
+                    <Text style={styles.heroPlot} numberOfLines={2}>
+                      {heroMovie.name ? `Assista agora a "${heroMovie.name}" com áudio e imagem de alta fidelidade.` : 'Filme completo em alta resolução.'}
+                    </Text>
+                  </LinearGradient>
+                </View>
+              )}
             </View>
           ) : null}
 
-          {/* Seção com Carrossel de Cards (Imagem 1) */}
+          {/* Seção com Carrossel de Cards e Ação Ver Todos */}
           <View style={styles.sectionHeaderRow}>
             <View style={styles.sectionTitleBox}>
               <Text style={styles.sectionTitle}>{selectedCategoryName}</Text>
@@ -537,10 +643,27 @@ export default function MoviesScreen() {
                 <Text style={styles.sectionCountText}>{filteredMovies.length}</Text>
               </View>
             </View>
-            <View style={styles.seeAllBtn}>
+            <Pressable
+              style={styles.seeAllBtn}
+              onPress={() => {
+                router.push({
+                  pathname: '/search',
+                  params: {
+                    initialType: 'movies',
+                    categoryId: selectedCategory === 'for_you' ? 'all' : selectedCategory,
+                    categoryName: selectedCategoryName,
+                  },
+                });
+              }}
+              hitSlop={8}
+            >
               <Text style={styles.seeAllText}>Ver todos</Text>
-              <Ionicons name="chevron-forward" size={14} color="#FFA000" />
-            </View>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={colors.primary}
+              />
+            </Pressable>
           </View>
 
           {loadingMovies ? (
@@ -619,10 +742,10 @@ export default function MoviesScreen() {
                 {filteredMovies.slice(10, 26).map((item) => (
                   <FocusableItem
                     key={item.stream_id}
-                    style={styles.gridCardItem}
+                    style={[styles.gridCardItem, { width: gridCardWidth }]}
                     onPress={() => handlePlayMovie(item)}
                   >
-                    <View style={styles.gridPosterBox}>
+                    <View style={[styles.gridPosterBox, { width: '100%', height: gridCardWidth * 1.5 }]}>
                       {item.stream_icon ? (
                         <Image
                           source={{ uri: item.stream_icon }}
@@ -715,7 +838,7 @@ export default function MoviesScreen() {
                 onPress={() => selectedMovie && handleWatchMovie(selectedMovie)}
               >
                 <LinearGradient
-                  colors={['#FF6A00', '#FFA000']}
+                  colors={['#00E5FF', '#A855F7']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.detailWatchGradient}
@@ -1016,7 +1139,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 2.5,
-    backgroundColor: '#FFA000',
+    backgroundColor: colors.primary,
     borderRadius: 2,
   },
 
@@ -1040,6 +1163,77 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#121217',
     position: 'relative',
+  },
+  heroCardLandscape: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#14141c',
+    borderRadius: 20,
+    padding: 16,
+    gap: 20,
+    borderWidth: 1,
+    borderColor: '#242430',
+  },
+  heroLandscapePosterBox: {
+    width: 140,
+    height: 205,
+    borderRadius: 14,
+    backgroundColor: '#181822',
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  heroLandscapePoster: {
+    width: '100%',
+    height: '100%',
+  },
+  heroLandscapeRatingBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  heroLandscapeRatingText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  heroLandscapeInfo: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 8,
+  },
+  heroLandscapeTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#fff',
+    lineHeight: 26,
+  },
+  heroLandscapeMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  heroLandscapePlot: {
+    color: '#aaa',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  heroLandscapeActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
   },
   heroImage: {
     width: '100%',
@@ -1182,7 +1376,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   seeAllText: {
-    color: '#FFA000',
+    color: colors.primary,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1257,7 +1451,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   gridCardItem: {
-    width: (width - 32 - 12) / 2,
     marginBottom: 8,
   },
   gridPosterBox: {

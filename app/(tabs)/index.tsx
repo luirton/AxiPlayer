@@ -4,14 +4,16 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  Dimensions,
+  useWindowDimensions,
   ActivityIndicator,
   Pressable,
   FlatList,
   Modal,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,12 +24,13 @@ import { SavedAccount, LiveChannel, VodMovie } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { StreamingBrandsRow, StreamingBrand } from '../../src/components/home/StreamingBrands';
 
-const { width } = Dimensions.get('window');
-
 export default function HomeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const [account, setAccount] = useState<SavedAccount | null>(null);
-  const [activeFilter, setActiveFilter] = useState<'tudo' | 'series' | 'filmes' | 'aovivo'>('tudo');
+  const [activeFilter, setActiveFilter] = useState<'home' | 'tudo' | 'series' | 'filmes' | 'aovivo'>('home');
   const [heroItem, setHeroItem] = useState<VodMovie | null>(null);
   const [todayChannels, setTodayChannels] = useState<LiveChannel[]>([]);
   const [favoriteChannels, setFavoriteChannels] = useState<LiveChannel[]>([]);
@@ -98,8 +101,15 @@ export default function HomeScreen() {
       }
 
       if (moviesRes.status === 'fulfilled' && Array.isArray(moviesRes.value) && moviesRes.value.length > 0) {
-        setHeroItem(moviesRes.value[0]);
-        setRecentMovies(moviesRes.value.slice(1, 15));
+        // Seleção aleatória de destaque entre os títulos
+        const validMovies = moviesRes.value.filter((m) => m && m.name);
+        const poolSize = Math.min(validMovies.length, 30);
+        const randomIndex = Math.floor(Math.random() * poolSize);
+        const chosenHero = validMovies[randomIndex] || validMovies[0];
+        setHeroItem(chosenHero);
+
+        const remaining = validMovies.filter((m) => m.stream_id !== chosenHero.stream_id);
+        setRecentMovies(remaining.slice(0, 20));
         hasAnySuccess = true;
       }
 
@@ -155,7 +165,7 @@ export default function HomeScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 12) }]}>
       {/* Top Header - Image 3 Style */}
       <View style={styles.topHeader}>
         <View style={styles.brandBox}>
@@ -171,20 +181,20 @@ export default function HomeScreen() {
         </FocusableItem>
       </View>
 
-      {/* Filter Chips Bar */}
+      {/* Filter Chips Bar (Home, Ao vivo, Séries, Filmes) */}
       <View style={styles.filterBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {/* 1. Tudo */}
+          {/* 1. Home */}
           <Pressable
-            style={[styles.filterChip, activeFilter === 'tudo' && styles.filterChipActive]}
-            onPress={() => setActiveFilter('tudo')}
+            style={[styles.filterChip, (activeFilter === 'home' || activeFilter === 'tudo') && styles.filterChipActive]}
+            onPress={() => setActiveFilter('home')}
           >
-            <Text style={[styles.filterText, activeFilter === 'tudo' && styles.filterTextActive]}>
-              Tudo
+            <Text style={[styles.filterText, (activeFilter === 'home' || activeFilter === 'tudo') && styles.filterTextActive]}>
+              Home
             </Text>
           </Pressable>
 
-          {/* 2. Ao vivo (Logo após Tudo) */}
+          {/* 2. Ao vivo */}
           <Pressable
             style={[styles.filterChip, activeFilter === 'aovivo' && styles.filterChipActive]}
             onPress={() => {
@@ -288,56 +298,126 @@ export default function HomeScreen() {
             />
           }
         >
-          {/* Main Hero Banner - Image 3 Style */}
+          {/* Main Hero Banner */}
           {heroItem ? (
             <View style={styles.heroWrapper}>
-              <View style={styles.heroCard}>
-                {heroItem.stream_icon ? (
-                  <Image
-                    source={{ uri: heroItem.stream_icon }}
-                    style={styles.heroImage}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View style={styles.heroFallback}>
-                    <Ionicons name="film" size={64} color="#333" />
+              {isLandscape ? (
+                <View style={styles.heroCardLandscape}>
+                  {/* Pôster estilo Filmes Recentes no lado esquerdo */}
+                  <View style={styles.heroLandscapePosterBox}>
+                    {heroItem.stream_icon ? (
+                      <Image
+                        source={{ uri: heroItem.stream_icon }}
+                        style={styles.heroLandscapePoster}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <View style={styles.heroFallback}>
+                        <Ionicons name="film" size={48} color="#555" />
+                      </View>
+                    )}
+                    {heroItem.rating && String(heroItem.rating) !== '0' ? (
+                      <View style={styles.heroLandscapeRatingBadge}>
+                        <Ionicons name="star" size={11} color="#FFD700" />
+                        <Text style={styles.heroLandscapeRatingText}>{String(heroItem.rating)}</Text>
+                      </View>
+                    ) : null}
                   </View>
-                )}
 
-                <LinearGradient
-                  colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(10,10,12,0.95)']}
-                  style={styles.heroGradient}
-                >
-                  <Text style={styles.heroTitle} numberOfLines={2}>
-                    {heroItem.name}
-                  </Text>
+                  {/* Informações detalhadas e Ação no lado direito */}
+                  <View style={styles.heroLandscapeInfo}>
+                    <Text style={styles.heroLandscapeTitle} numberOfLines={2}>
+                      {heroItem.name}
+                    </Text>
 
-                  <FocusableItem
-                    style={styles.watchNowButton}
-                    onPress={() => {
-                      router.push({
-                        pathname: '/player/[id]',
-                        params: {
-                          id: heroItem.stream_id,
-                          type: 'movie',
-                          title: heroItem.name,
-                          extension: heroItem.container_extension || 'mp4',
-                        },
-                      });
-                    }}
-                  >
-                    <LinearGradient
-                      colors={['#FF6A00', '#FFA000']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.watchNowGradient}
+                    <View style={styles.heroLandscapeMetaRow}>
+                      {heroItem.name?.match(/\((\d{4})\)/) ? (
+                        <View style={styles.heroLandscapeYearBadge}>
+                          <Text style={styles.heroLandscapeYearText}>
+                            {heroItem.name.match(/\((\d{4})\)/)?.[1]}
+                          </Text>
+                        </View>
+                      ) : null}
+                      <View style={styles.heroLandscapeTypeBadge}>
+                        <Text style={styles.heroLandscapeTypeText}>Destaque VOD</Text>
+                      </View>
+                    </View>
+
+                    <FocusableItem
+                      style={styles.watchNowButtonLandscape}
+                      onPress={() => {
+                        router.push({
+                          pathname: '/player/[id]',
+                          params: {
+                            id: heroItem.stream_id,
+                            type: 'movie',
+                            title: heroItem.name,
+                            extension: heroItem.container_extension || 'mp4',
+                          },
+                        });
+                      }}
                     >
-                      <Ionicons name="play" size={16} color="#000" />
-                      <Text style={styles.watchNowText}>Assistir agora</Text>
-                    </LinearGradient>
-                  </FocusableItem>
-                </LinearGradient>
-              </View>
+                      <LinearGradient
+                        colors={['#00E5FF', '#A855F7']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.watchNowGradient}
+                      >
+                        <Ionicons name="play" size={16} color="#000" />
+                        <Text style={styles.watchNowText}>Assistir agora</Text>
+                      </LinearGradient>
+                    </FocusableItem>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.heroCard}>
+                  {heroItem.stream_icon ? (
+                    <Image
+                      source={{ uri: heroItem.stream_icon }}
+                      style={styles.heroImage}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={styles.heroFallback}>
+                      <Ionicons name="film" size={64} color="#333" />
+                    </View>
+                  )}
+
+                  <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(10,10,12,0.95)']}
+                    style={styles.heroGradient}
+                  >
+                    <Text style={styles.heroTitle} numberOfLines={2}>
+                      {heroItem.name}
+                    </Text>
+
+                    <FocusableItem
+                      style={styles.watchNowButton}
+                      onPress={() => {
+                        router.push({
+                          pathname: '/player/[id]',
+                          params: {
+                            id: heroItem.stream_id,
+                            type: 'movie',
+                            title: heroItem.name,
+                            extension: heroItem.container_extension || 'mp4',
+                          },
+                        });
+                      }}
+                    >
+                      <LinearGradient
+                        colors={['#00E5FF', '#A855F7']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.watchNowGradient}
+                      >
+                        <Ionicons name="play" size={16} color="#000" />
+                        <Text style={styles.watchNowText}>Assistir agora</Text>
+                      </LinearGradient>
+                    </FocusableItem>
+                  </LinearGradient>
+                </View>
+              )}
             </View>
           ) : null}
 
@@ -419,7 +499,7 @@ export default function HomeScreen() {
           {watchLaterList.length > 0 ? (
             <View style={styles.sectionContainer}>
               <View style={styles.sectionTitleRow}>
-                <Ionicons name="time" size={18} color="#FF6A00" />
+                <Ionicons name="time" size={18} color={colors.primary} />
                 <Text style={styles.sectionTitleWithIcon}>Assistir Depois</Text>
                 <Text style={styles.sectionBadge}>({watchLaterList.length})</Text>
               </View>
@@ -637,7 +717,7 @@ export default function HomeScreen() {
                       colors={['#1c1c24', '#121217']}
                       style={styles.brandChoiceGradient}
                     >
-                      <Ionicons name="film" size={32} color="#FFA000" />
+                      <Ionicons name="film" size={32} color={colors.primary} />
                       <Text style={styles.brandChoiceTitle}>Filmes</Text>
                       <Text style={styles.brandChoiceDesc}>Ver catálogo de filmes</Text>
                     </LinearGradient>
@@ -651,7 +731,7 @@ export default function HomeScreen() {
                       colors={['#1c1c24', '#121217']}
                       style={styles.brandChoiceGradient}
                     >
-                      <Ionicons name="tv" size={32} color="#FFA000" />
+                      <Ionicons name="tv" size={32} color={colors.secondary} />
                       <Text style={styles.brandChoiceTitle}>Séries</Text>
                       <Text style={styles.brandChoiceDesc}>Ver temporadas e episódios</Text>
                     </LinearGradient>
@@ -676,8 +756,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0c',
-    paddingTop: 36,
+    backgroundColor: colors.background,
   },
   topHeader: {
     flexDirection: 'row',
@@ -701,14 +780,14 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#16161d',
+    backgroundColor: '#101628',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#22222d',
+    borderColor: '#1E2845',
   },
   filterBar: {
-    marginBottom: 14,
+    marginBottom: 16,
   },
   filterScroll: {
     paddingHorizontal: 20,
@@ -718,18 +797,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#181820',
+    backgroundColor: '#101628',
+    borderWidth: 1,
+    borderColor: '#1E2845',
   },
   filterChipActive: {
-    backgroundColor: '#F5A623',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   filterText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#888',
+    color: '#9AA4BC',
   },
   filterTextActive: {
     color: '#000',
+    fontWeight: '800',
   },
   centerBox: {
     flex: 1,
@@ -757,6 +840,94 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
     backgroundColor: '#111',
+  },
+  heroCardLandscape: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#14141c',
+    borderRadius: 20,
+    padding: 16,
+    gap: 20,
+    borderWidth: 1,
+    borderColor: '#242430',
+  },
+  heroLandscapePosterBox: {
+    width: 140,
+    height: 200,
+    borderRadius: 14,
+    backgroundColor: '#181822',
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  heroLandscapePoster: {
+    width: '100%',
+    height: '100%',
+  },
+  heroLandscapeRatingBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  heroLandscapeRatingText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  heroLandscapeInfo: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 10,
+  },
+  heroLandscapeTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#fff',
+    lineHeight: 26,
+  },
+  heroLandscapeMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  heroLandscapeYearBadge: {
+    backgroundColor: '#262638',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  heroLandscapeYearText: {
+    color: '#ccc',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  heroLandscapeTypeBadge: {
+    backgroundColor: 'rgba(255, 106, 0, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 106, 0, 0.3)',
+  },
+  heroLandscapeTypeText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  watchNowButtonLandscape: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
   },
   heroImage: {
     width: '100%',
@@ -868,7 +1039,7 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: '#F5A623',
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -882,7 +1053,7 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#FF6A00',
+    backgroundColor: colors.primary,
   },
   continueItemName: {
     color: '#bbb',
@@ -949,7 +1120,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.2)',
   },
   watchLaterTypeText: {
-    color: '#FF6A00',
+    color: colors.primary,
     fontSize: 9,
     fontWeight: '800',
     textTransform: 'uppercase',

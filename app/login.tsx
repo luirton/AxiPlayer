@@ -412,7 +412,7 @@ export default function LoginScreen() {
                 disabled={loading}
               >
                 <LinearGradient
-                  colors={[colors.primaryCrimson, colors.primary, colors.primaryAmber]}
+                  colors={[colors.primary, colors.secondary]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.submitGradient}
@@ -477,7 +477,7 @@ export default function LoginScreen() {
                 disabled={loading}
               >
                 <LinearGradient
-                  colors={[colors.primaryCrimson, colors.primary, colors.primaryAmber]}
+                  colors={[colors.primary, colors.secondary]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.submitGradient}

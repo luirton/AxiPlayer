@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,8 @@ import { uiState } from '../../services/uiState';
 export const FloatingTabBar = (props: any) => {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
   const state = props?.state;
   const [isFullscreen, setIsFullscreen] = useState(uiState.getFullscreen());
 
@@ -22,8 +24,10 @@ export const FloatingTabBar = (props: any) => {
     return null;
   }
 
-  // Eleva o menu flutuante para garantir que não colida com os botões ou barra de gestos do Android
-  const bottomOffset = Math.max(insets.bottom + 16, 42);
+  // Eleva o menu flutuante no portrait para não colidir com gestos, e mantém discreto no landscape
+  const bottomOffset = isLandscape
+    ? Math.max(insets.bottom + 6, 12)
+    : Math.max(insets.bottom + 16, 42);
 
   return (
     <View style={[styles.wrapper, { bottom: bottomOffset }]} pointerEvents="box-none">
@@ -61,7 +65,7 @@ export const FloatingTabBar = (props: any) => {
             return (
               <Pressable key={route.key} onPress={onPress} style={styles.activeTabWrapper}>
                 <LinearGradient
-                  colors={['#FF6A00', '#FFA000']}
+                  colors={['#00E5FF', '#A855F7']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.activePill}
@@ -96,16 +100,16 @@ const styles = StyleSheet.create({
   pillContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#161618',
+    backgroundColor: '#0E1322',
     borderRadius: 36,
     paddingVertical: 6,
     paddingHorizontal: 8,
     borderWidth: 1,
-    borderColor: '#2A2A2E',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.6,
-    shadowRadius: 16,
+    borderColor: '#1E2845',
+    shadowColor: '#00E5FF',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
     elevation: 12,
     gap: 6,
   },
