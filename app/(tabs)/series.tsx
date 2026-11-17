@@ -21,6 +21,7 @@ import { XtreamClient } from '../../src/services/xtreamClient';
 import { IptvCategory, SeriesItem, SeriesInfoResponse, SavedAccount } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { isAdultCategory } from '../../src/services/parentalControl';
+import { EnrichedPosterImage } from '../../src/components/common/EnrichedPosterImage';
 
 export default function SeriesScreen() {
   const router = useRouter();
@@ -139,18 +140,31 @@ export default function SeriesScreen() {
           setSeriesList(s || []);
           if (s && s.length > 0) setHeroSeries(pickRandomSeries(s));
           return;
+        } else {
+          // Marca de streaming não encontrada na lista IPTV do usuário
+          setSelectedCategory(params.brand);
+          setSelectedCategoryName(params.brandName || params.brand);
+          setSelectedBrandName(params.brandName || params.brand);
+          setSeriesList([]);
+          setHeroSeries(null);
+          return;
         }
       }
 
-      // Carga inicial para "Para você": Carregamento dinâmico e aleatório
+      // Carga inicial para "Para você": Carrega séries da primeira categoria para exibição imediata
       let initialSeries: SeriesItem[] = [];
-      try {
-        const allS = await client.getSeries();
-        initialSeries = (allS || []).sort(() => 0.5 - Math.random());
-      } catch (e) {
-        if (cats && cats.length > 0) {
+      if (cats && cats.length > 0) {
+        try {
           initialSeries = (await client.getSeries(cats[0].category_id)) || [];
+        } catch (e) {
+          console.warn('Erro ao carregar séries da primeira categoria:', e);
         }
+      }
+      if (initialSeries.length === 0) {
+        try {
+          const allS = await client.getSeries();
+          initialSeries = allS || [];
+        } catch (e) {}
       }
       setSeriesList(initialSeries);
       if (initialSeries.length > 0) setHeroSeries(pickRandomSeries(initialSeries));
@@ -180,9 +194,10 @@ export default function SeriesScreen() {
       const client = new XtreamClient(account.serverUrl, account.username, account.password);
       let s: SeriesItem[] = [];
       if (catId === 'for_you') {
-        // Carrega aleatório e dinâmico a cada clique
-        const allS = await client.getSeries();
-        s = (allS || []).sort(() => 0.5 - Math.random());
+        const firstCatId = categories[0]?.category_id;
+        s = firstCatId
+          ? (await client.getSeries(firstCatId)) || []
+          : (await client.getSeries()) || [];
       } else if (catId === 'all') {
         // Carrega todas as séries sem filtro de categoria
         s = (await client.getSeries()) || [];
@@ -532,17 +547,14 @@ export default function SeriesScreen() {
                 <View style={styles.heroCardLandscape}>
                   {/* Pôster estilo Filmes Recentes no lado esquerdo */}
                   <View style={styles.heroLandscapePosterBox}>
-                    {heroSeries.cover ? (
-                      <Image
-                        source={{ uri: heroSeries.cover }}
-                        style={styles.heroLandscapePoster}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={styles.heroFallback}>
-                        <Ionicons name="albums" size={48} color="#555" />
-                      </View>
-                    )}
+                    <EnrichedPosterImage
+                      sourceUri={heroSeries.cover}
+                      title={heroSeries.name}
+                      type="series"
+                      style={styles.heroLandscapePoster}
+                      contentFit="cover"
+                      fallbackIcon="albums-outline"
+                    />
                     {heroRating !== '0' ? (
                       <View style={styles.heroLandscapeRatingBadge}>
                         <Ionicons name="star" size={11} color="#FFD700" />
@@ -607,17 +619,14 @@ export default function SeriesScreen() {
                 </View>
               ) : (
                 <View style={styles.heroCard}>
-                  {heroSeries.cover ? (
-                    <Image
-                      source={{ uri: heroSeries.cover }}
-                      style={styles.heroImage}
-                      contentFit="cover"
-                    />
-                  ) : (
-                    <View style={styles.heroFallback}>
-                      <Ionicons name="albums" size={64} color="#333" />
-                    </View>
-                  )}
+                  <EnrichedPosterImage
+                    sourceUri={heroSeries.cover}
+                    title={heroSeries.name}
+                    type="series"
+                    style={styles.heroImage}
+                    contentFit="cover"
+                    fallbackIcon="albums-outline"
+                  />
 
                   <LinearGradient
                     colors={['transparent', 'rgba(10,10,12,0.4)', 'rgba(10,10,12,0.98)']}
@@ -737,17 +746,14 @@ export default function SeriesScreen() {
                     onPress={() => handleSeriesClick(item)}
                   >
                     <View style={styles.cardPosterBox}>
-                      {item.cover ? (
-                        <Image
-                          source={{ uri: item.cover }}
-                          style={styles.cardPoster}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <View style={styles.cardPosterFallback}>
-                          <Ionicons name="albums-outline" size={32} color="#555" />
-                        </View>
-                      )}
+                      <EnrichedPosterImage
+                        sourceUri={item.cover}
+                        title={item.name}
+                        type="series"
+                        style={styles.cardPoster}
+                        contentFit="cover"
+                        fallbackIcon="albums-outline"
+                      />
 
                       {ratingStr && ratingStr !== '0' ? (
                         <View style={styles.cardRatingBadge}>
@@ -793,17 +799,14 @@ export default function SeriesScreen() {
                     onPress={() => handleSeriesClick(item)}
                   >
                     <View style={[styles.gridPosterBox, { width: '100%', height: gridCardWidth * 1.5 }]}>
-                      {item.cover ? (
-                        <Image
-                          source={{ uri: item.cover }}
-                          style={styles.cardPoster}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <View style={styles.cardPosterFallback}>
-                          <Ionicons name="albums-outline" size={28} color="#555" />
-                        </View>
-                      )}
+                      <EnrichedPosterImage
+                        sourceUri={item.cover}
+                        title={item.name}
+                        type="series"
+                        style={styles.cardPoster}
+                        contentFit="cover"
+                        fallbackIcon="albums-outline"
+                      />
                     </View>
                     <Text style={styles.cardTitle} numberOfLines={1}>
                       {item.name}
@@ -851,17 +854,14 @@ export default function SeriesScreen() {
             >
               {/* Backdrop / Imagem 16:9 no Topo */}
               <View style={styles.backdropWrapper}>
-                {selectedSeries?.cover ? (
-                  <Image
-                    source={{ uri: selectedSeries.cover }}
-                    style={styles.backdropImage}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View style={styles.backdropFallback}>
-                    <Ionicons name="albums" size={64} color="#333" />
-                  </View>
-                )}
+                <EnrichedPosterImage
+                  sourceUri={selectedSeries?.cover}
+                  title={selectedSeries?.name || ''}
+                  type="series"
+                  style={styles.backdropImage}
+                  contentFit="cover"
+                  fallbackIcon="albums-outline"
+                />
                 <LinearGradient
                   colors={['transparent', 'rgba(7,7,9,0.5)', '#070709']}
                   style={styles.backdropGradient}

@@ -19,10 +19,11 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Image } from 'expo-image';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { useVideoPlayer, VideoView, VideoSource } from 'expo-video';
 import * as NavigationBar from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { colors } from '../../src/theme/colors';
 import { storage } from '../../src/services/storage';
 import { XtreamClient } from '../../src/services/xtreamClient';
@@ -67,6 +68,8 @@ export default function LiveScreen() {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [controlsVisible, setControlsVisible] = useState<boolean>(true);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [aspectRatio, setAspectRatio] = useState<'contain' | 'cover' | 'fill'>('contain');
 
   // Quick Channels Drawer in Fullscreen
   const [channelDrawerOpen, setChannelDrawerOpen] = useState<boolean>(false);
@@ -97,28 +100,54 @@ export default function LiveScreen() {
   const controlsTimeoutRef = useRef<any>(null);
   const gestureHideTimeoutRef = useRef<any>(null);
 
-  // Video Player instance
-  const miniPlayer = useVideoPlayer(streamUrl, (player) => {
+  // Format fallback and error recovery refs
+  const currentLiveFormatRef = useRef<'m3u8' | 'ts'>('m3u8');
+  const liveFallbackAttemptedRef = useRef<boolean>(false);
+
+  // Video Player instance (initialized with null to prevent ExoPlayer empty URI errors)
+  const miniPlayer = useVideoPlayer(null, (player) => {
     player.loop = false;
     player.play();
   });
 
-  // Keep track of playing state
+  // Keep track of playing state and automatic format fallback
   useEffect(() => {
     if (!miniPlayer) return;
     const subscription = miniPlayer.addListener('playingChange', (event) => {
       setIsPlaying(event.isPlaying);
     });
+    const statusSub = miniPlayer.addListener('statusChange', (event) => {
+      if (event.status === 'error' && activeChannel && !liveFallbackAttemptedRef.current) {
+        liveFallbackAttemptedRef.current = true;
+        const currentFmt = currentLiveFormatRef.current;
+        const fallbackFmt = currentFmt === 'm3u8' ? 'ts' : 'm3u8';
+        currentLiveFormatRef.current = fallbackFmt;
+        console.log(`[Live] Fallback de canal: alternando de .${currentFmt} para .${fallbackFmt}`);
+        if (account) {
+          const client = new XtreamClient(account.serverUrl, account.username, account.password);
+          const fallbackUrl = client.getLiveStreamUrl(activeChannel.stream_id, fallbackFmt);
+          setStreamUrl(fallbackUrl);
+        }
+      }
+    });
     return () => {
       subscription.remove();
+      statusSub.remove();
     };
-  }, [miniPlayer]);
+  }, [miniPlayer, activeChannel, account]);
 
-  // Whenever streamUrl changes, replace source in player without remounting
+  // Whenever streamUrl changes, replace source in player with IPTV Smarters headers
   useEffect(() => {
     if (miniPlayer && streamUrl) {
       try {
-        miniPlayer.replace(streamUrl);
+        const source: VideoSource = {
+          uri: streamUrl,
+          headers: {
+            'User-Agent': 'IPTVSmartersPro/1.0.0 (Linux; Android; Mobile; Exoplayer)',
+            'Accept': '*/*',
+          },
+        };
+        miniPlayer.replace(source);
         miniPlayer.play();
       } catch (err) {
         console.warn('Error replacing player stream:', err);
@@ -291,6 +320,7 @@ export default function LiveScreen() {
   };
 
   const selectChannelForPlayer = async (ch: LiveChannel, acc?: SavedAccount, categoryId?: string) => {
+    liveFallbackAttemptedRef.current = false;
     setActiveChannel(ch);
     const targetAccount = acc || account;
 
@@ -305,8 +335,10 @@ export default function LiveScreen() {
 
     try {
       const settings = await storage.getSettings();
+      const format = settings.streamFormat || 'm3u8';
+      currentLiveFormatRef.current = format;
       const client = new XtreamClient(targetAccount.serverUrl, targetAccount.username, targetAccount.password);
-      const url = client.getLiveStreamUrl(ch.stream_id, settings.streamFormat);
+      const url = client.getLiveStreamUrl(ch.stream_id, format);
       setStreamUrl(url);
 
       // Load EPG for channel
@@ -535,6 +567,7 @@ export default function LiveScreen() {
 
   // Auto-hide controls timer
   const resetControlsTimer = () => {
+    if (isLocked) return;
     setControlsVisible(true);
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current);
@@ -546,12 +579,21 @@ export default function LiveScreen() {
 
   const toggleControls = () => {
     if (isDraggingRef.current) return;
+    if (isLocked) {
+      setControlsVisible((prev) => !prev);
+      return;
+    }
     if (controlsVisible) {
       setControlsVisible(false);
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     } else {
       resetControlsTimer();
     }
+  };
+
+  const handleToggleAspectRatio = () => {
+    setAspectRatio((prev) => (prev === 'contain' ? 'cover' : prev === 'cover' ? 'fill' : 'contain'));
+    resetControlsTimer();
   };
 
   // Gesture Controls: Volume & Brightness
@@ -985,7 +1027,7 @@ export default function LiveScreen() {
           <VideoView
             style={styles.fullscreenVideo}
             player={miniPlayer}
-            contentFit="contain"
+            contentFit={aspectRatio}
             nativeControls={false}
           />
 
@@ -993,7 +1035,7 @@ export default function LiveScreen() {
           <View
             style={[
               styles.brightnessOverlay,
-              { opacity: Math.max(0, 1 - brightness) * 0.8 },
+              { backgroundColor: `rgba(0,0,0,${(1 - brightness).toFixed(2)})` },
             ]}
             pointerEvents="none"
           />
@@ -1033,53 +1075,167 @@ export default function LiveScreen() {
           {/* Tap Detector for showing/hiding controls */}
           <Pressable style={styles.tapDetector} onPress={toggleControls} />
 
-          {/* Controls Overlay (Matches User Image 1 Exactly) */}
-          {controlsVisible && (
-            <View style={styles.controlsOverlay} pointerEvents="box-none">
-              {/* TOP BAR */}
-              <View style={styles.fsTopBar}>
-                {/* Back Button: shrinks back to mini player without stopping video! */}
-                <Pressable
-                  style={styles.fsBackBtn}
-                  onPress={handleCloseFullscreen}
-                  hitSlop={15}
-                >
-                  <Ionicons name="chevron-back" size={28} color="#fff" />
-                </Pressable>
+          {/* Screen Locked Discrete Pill Button */}
+          {isLocked && controlsVisible ? (
+            <View style={styles.lockedPillContainer} pointerEvents="box-none">
+              <Pressable
+                style={styles.lockedPillBtn}
+                onPress={() => {
+                  setIsLocked(false);
+                  resetControlsTimer();
+                }}
+              >
+                <Ionicons name="lock-closed" size={20} color="#FFD700" />
+                <Text style={styles.lockedPillText}>Tela Bloqueada · Toque para Desbloquear</Text>
+              </Pressable>
+            </View>
+          ) : null}
 
-                <View style={styles.fsTitleBox}>
-                  <Text style={styles.fsChannelName} numberOfLines={1}>
-                    {activeChannel.name}
-                  </Text>
-                  <Text style={styles.fsProgramName} numberOfLines={1}>
-                    {currentProgramName}
-                  </Text>
-                </View>
-
-                {/* Cast to TV button */}
-                <Pressable
-                  style={styles.fsTopCastBtn}
-                  onPress={handleCastToTv}
-                  hitSlop={15}
-                >
-                  <Ionicons name="tv-outline" size={24} color="#fff" />
-                </Pressable>
+          {/* Left Vertical Brightness Slider (Image 2 & 3) */}
+          {controlsVisible && !isLocked ? (
+            <View style={styles.leftVerticalSliderBox} pointerEvents="box-none">
+              <Ionicons name="sunny-outline" size={20} color="#fff" style={styles.sliderIcon} />
+              <View style={styles.verticalTrack}>
+                <View
+                  style={[
+                    styles.verticalFill,
+                    { height: `${Math.round(brightness * 100)}%` },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.verticalThumb,
+                    { bottom: `${Math.min(96, Math.max(0, Math.round(brightness * 100) - 4))}%` },
+                  ]}
+                />
               </View>
+            </View>
+          ) : null}
+
+          {/* Right Vertical Volume Slider (Image 2 & 3) */}
+          {controlsVisible && !isLocked ? (
+            <View style={styles.rightVerticalSliderBox} pointerEvents="box-none">
+              <Ionicons
+                name={volume === 0 ? 'volume-mute-outline' : 'volume-high-outline'}
+                size={20}
+                color="#fff"
+                style={styles.sliderIcon}
+              />
+              <View style={styles.verticalTrack}>
+                <View
+                  style={[
+                    styles.verticalFill,
+                    { height: `${Math.round(volume * 100)}%` },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.verticalThumb,
+                    { bottom: `${Math.min(96, Math.max(0, Math.round(volume * 100) - 4))}%` },
+                  ]}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {/* Controls Overlay (Matches User Image 2 & 3 Format) */}
+          {controlsVisible && !isLocked ? (
+            <View style={styles.controlsOverlay} pointerEvents="box-none">
+              {/* TOP BAR: Back Button on left, Empty center, 5 Action icons on right */}
+              <LinearGradient
+                colors={['rgba(0,0,0,0.85)', 'rgba(0,0,0,0.4)', 'transparent']}
+                style={styles.topGradient}
+              >
+                <View style={styles.topRow}>
+                  {/* Back Button */}
+                  <Pressable
+                    style={styles.topIconBtn}
+                    onPress={handleCloseFullscreen}
+                    hitSlop={12}
+                  >
+                    <Ionicons name="chevron-back" size={28} color="#fff" />
+                  </Pressable>
+
+                  {/* Clean Center (Image 2 & 3 Format) */}
+                  <View style={{ flex: 1 }} />
+
+                  {/* Top Right Action Icons: Server, Heart, Lock, Search, AspectRatio */}
+                  <View style={styles.topRightIconsRow}>
+                    {/* 1. Channels Drawer List */}
+                    <Pressable
+                      style={styles.topActionIconBtn}
+                      onPress={() => {
+                        resetControlsTimer();
+                        setChannelDrawerOpen(true);
+                      }}
+                      hitSlop={10}
+                    >
+                      <Ionicons name="server-outline" size={24} color="#fff" />
+                    </Pressable>
+
+                    {/* 2. Favorite Button */}
+                    <Pressable
+                      style={styles.topActionIconBtn}
+                      onPress={() => handleToggleFavorite(activeChannel.stream_id)}
+                      hitSlop={10}
+                    >
+                      <Ionicons
+                        name={favorites.includes(activeChannel.stream_id) ? 'heart' : 'heart-outline'}
+                        size={24}
+                        color={favorites.includes(activeChannel.stream_id) ? '#FF3B30' : '#fff'}
+                      />
+                    </Pressable>
+
+                    {/* 3. Screen Lock */}
+                    <Pressable
+                      style={styles.topActionIconBtn}
+                      onPress={() => {
+                        setIsLocked(true);
+                        setControlsVisible(false);
+                      }}
+                      hitSlop={10}
+                    >
+                      <Ionicons name="lock-open-outline" size={24} color="#fff" />
+                    </Pressable>
+
+                    {/* 4. Search Channels Button */}
+                    <Pressable
+                      style={styles.topActionIconBtn}
+                      onPress={() => {
+                        resetControlsTimer();
+                        setChannelDrawerOpen(true);
+                      }}
+                      hitSlop={10}
+                    >
+                      <Ionicons name="search-outline" size={24} color="#fff" />
+                    </Pressable>
+
+                    {/* 5. Aspect Ratio Resize Button */}
+                    <Pressable
+                      style={styles.topActionIconBtn}
+                      onPress={handleToggleAspectRatio}
+                      hitSlop={10}
+                    >
+                      <Ionicons name="scan-outline" size={24} color="#fff" />
+                    </Pressable>
+                  </View>
+                </View>
+              </LinearGradient>
 
               {/* CENTER CONTROLS: |<  Play/Pause  >| */}
-              <View style={styles.fsCenterControls}>
+              <View style={styles.centerControlsRow} pointerEvents="box-none">
                 <Pressable
-                  style={styles.fsNavBtn}
+                  style={styles.seekStepBtn}
                   onPress={handlePrevChannel}
-                  hitSlop={15}
+                  hitSlop={14}
                 >
-                  <Ionicons name="play-skip-back-outline" size={32} color="#fff" />
+                  <Ionicons name="play-skip-back" size={28} color="#fff" />
                 </Pressable>
 
                 <Pressable
-                  style={styles.fsPlayBtn}
+                  style={styles.playPauseCircle}
                   onPress={togglePlayPause}
-                  hitSlop={15}
+                  hitSlop={14}
                 >
                   <Ionicons
                     name={isPlaying ? 'pause' : 'play'}
@@ -1089,62 +1245,69 @@ export default function LiveScreen() {
                 </Pressable>
 
                 <Pressable
-                  style={styles.fsNavBtn}
+                  style={styles.seekStepBtn}
                   onPress={handleNextChannel}
-                  hitSlop={15}
+                  hitSlop={14}
                 >
-                  <Ionicons name="play-skip-forward-outline" size={32} color="#fff" />
+                  <Ionicons name="play-skip-forward" size={28} color="#fff" />
                 </Pressable>
               </View>
 
-              {/* BOTTOM SECTION */}
-              <View style={styles.fsBottomSection}>
-                {/* Yellow Live Timeline Bar */}
-                <View style={styles.fsTimelineContainer}>
-                  <View style={styles.fsTimelineBar} />
-                  <Text style={styles.fsLiveTagRight}>Ao vivo</Text>
+              {/* BOTTOM SECTION (Image 2 & 3: Logo, Channel, Programs, Live Badge & Blue Progress Bar) */}
+              <LinearGradient
+                colors={['transparent', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.95)']}
+                style={styles.bottomGradient}
+              >
+                <View style={styles.liveBottomCard}>
+                  <View style={styles.liveBottomContentRow}>
+                    {/* Channel Logo in White Rounded Box */}
+                    <View style={styles.liveChannelLogoBox}>
+                      {activeChannel.stream_icon ? (
+                        <Image
+                          source={{ uri: activeChannel.stream_icon }}
+                          style={styles.liveChannelLogo}
+                          contentFit="contain"
+                        />
+                      ) : (
+                        <Ionicons name="tv" size={24} color="#000" />
+                      )}
+                    </View>
+
+                    {/* Channel Number, Name and Current Program */}
+                    <View style={styles.liveChannelInfoBox}>
+                      <Text style={styles.liveChannelName} numberOfLines={1}>
+                        {activeChannel.num ? `${activeChannel.num} ` : ''}{activeChannel.name}
+                      </Text>
+                      <Text style={styles.liveProgramTitle} numberOfLines={1}>
+                        {epgList && epgList.length > 0 && epgList[0]?.start
+                          ? `${epgList[0].start.slice(11, 16)} ${epgList[0].title || ''}`
+                          : currentProgramName}
+                      </Text>
+                    </View>
+
+                    {/* Right Side: Next Program & Live Badge */}
+                    <View style={styles.liveStatusBox}>
+                      {epgList && epgList.length > 1 && epgList[1]?.title ? (
+                        <Text style={styles.liveNextProgramText} numberOfLines={1}>
+                          {epgList[1].start ? `${epgList[1].start.slice(11, 16)} ` : ''}
+                          {epgList[1].title}
+                        </Text>
+                      ) : null}
+                      <View style={styles.liveBadgeRow}>
+                        <View style={styles.liveRedDot} />
+                        <Text style={styles.liveBadgeText}>LIVE | 1280x720</Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {/* Horizontal Blue Progress Bar (Image 2 & 3) */}
+                  <View style={styles.liveTimelineTrack}>
+                    <View style={styles.liveTimelineFill} />
+                  </View>
                 </View>
-
-                {/* Bottom Action Pills: Canais, Programação, Favoritar */}
-                <View style={styles.fsActionPillsRow}>
-                  <Pressable
-                    style={styles.fsActionPill}
-                    onPress={() => setChannelDrawerOpen(true)}
-                  >
-                    <Ionicons name="list" size={18} color="#fff" />
-                    <Text style={styles.fsActionPillText}>Canais</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={styles.fsActionPill}
-                    onPress={() => setEpgModalOpen(true)}
-                  >
-                    <Ionicons name="calendar-outline" size={18} color="#fff" />
-                    <Text style={styles.fsActionPillText}>Programação</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={styles.fsActionPill}
-                    onPress={() => handleToggleFavorite(activeChannel.stream_id)}
-                  >
-                    <Ionicons
-                      name={favorites.includes(activeChannel.stream_id) ? 'star' : 'star-outline'}
-                      size={18}
-                      color={favorites.includes(activeChannel.stream_id) ? '#FFD700' : '#fff'}
-                    />
-                    <Text
-                      style={[
-                        styles.fsActionPillText,
-                        favorites.includes(activeChannel.stream_id) && { color: '#FFD700' },
-                      ]}
-                    >
-                      {favorites.includes(activeChannel.stream_id) ? 'Favoritado' : 'Favoritar'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
+              </LinearGradient>
             </View>
-          )}
+          ) : null}
 
           {/* Quick Channels Drawer Modal inside Fullscreen */}
           <Modal
@@ -1724,97 +1887,205 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: Platform.OS === 'android' ? 20 : 36,
   },
-  fsTopBar: {
+  /* Top Bar (Image 2 & 3 Layout) */
+  topGradient: {
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'android' ? 16 : 32,
+    paddingBottom: 24,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  topIconBtn: {
+    padding: 6,
+  },
+  topRightIconsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
   },
-  fsBackBtn: {
+  topActionIconBtn: {
     padding: 6,
   },
-  fsTitleBox: {
-    flex: 1,
+
+  /* Vertical Sliders (Image 2 & 3) */
+  leftVerticalSliderBox: {
+    position: 'absolute',
+    left: 24,
+    top: '32%',
+    alignItems: 'center',
+    gap: 10,
+    zIndex: 12,
   },
-  fsChannelName: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 0.3,
+  rightVerticalSliderBox: {
+    position: 'absolute',
+    right: 24,
+    top: '32%',
+    alignItems: 'center',
+    gap: 10,
+    zIndex: 12,
   },
-  fsProgramName: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 2,
+  sliderIcon: {
+    marginBottom: 4,
   },
-  fsTopCastBtn: {
-    padding: 8,
+  verticalTrack: {
+    width: 3,
+    height: 140,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 2,
+    position: 'relative',
+    justifyContent: 'flex-end',
   },
-  fsCenterControls: {
+  verticalFill: {
+    width: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 2,
+  },
+  verticalThumb: {
+    position: 'absolute',
+    left: -4.5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#fff',
+    elevation: 3,
+  },
+
+  /* Center Controls Row */
+  centerControlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 48,
+    gap: 56,
   },
-  fsNavBtn: {
+  seekStepBtn: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fsPlayBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+  playPauseCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
   },
-  fsBottomSection: {
-    gap: 14,
+
+  /* Bottom Section (Image 2 & 3) */
+  bottomGradient: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 22,
   },
-  fsTimelineContainer: {
+  liveBottomCard: {
+    width: '100%',
+    gap: 10,
+  },
+  liveBottomContentRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
-  fsTimelineBar: {
-    flex: 1,
-    height: 3,
-    backgroundColor: colors.primary,
-    borderRadius: 2,
-  },
-  fsLiveTagRight: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  fsActionPillsRow: {
-    flexDirection: 'row',
+  liveChannelLogoBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    padding: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 28,
+    elevation: 3,
   },
-  fsActionPill: {
+  liveChannelLogo: {
+    width: '100%',
+    height: '100%',
+  },
+  liveChannelInfoBox: {
+    flex: 1,
+  },
+  liveChannelName: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  liveProgramTitle: {
+    color: '#bbb',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  liveStatusBox: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  liveNextProgramText: {
+    color: '#bbb',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  liveBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(20,20,26,0.7)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
   },
-  fsActionPillText: {
+  liveRedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF3B30',
+  },
+  liveBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  liveTimelineTrack: {
+    width: '100%',
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 1.5,
+    overflow: 'hidden',
+    marginTop: 6,
+  },
+  liveTimelineFill: {
+    width: '40%',
+    height: '100%',
+    backgroundColor: '#1E88E5',
+  },
+
+  /* Screen Locked Pill */
+  lockedPillContainer: {
+    position: 'absolute',
+    top: 40,
+    alignSelf: 'center',
+    zIndex: 99,
+  },
+  lockedPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(20,20,24,0.9)',
+    borderWidth: 1.5,
+    borderColor: '#FFD700',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 24,
+    gap: 8,
+  },
+  lockedPillText: {
     color: '#fff',
     fontSize: 13,
     fontWeight: '700',

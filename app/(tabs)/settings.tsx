@@ -12,6 +12,7 @@ import {
   FlatList,
   Dimensions,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
@@ -19,6 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme/colors';
 import { storage, AppSettings, MediaListItem } from '../../src/services/storage';
 import { SavedAccount, LiveChannel, VodMovie, SeriesItem } from '../../src/types/iptv';
+import { XtreamClient } from '../../src/services/xtreamClient';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import {
   checkStoragePermissions,
@@ -52,6 +54,53 @@ export default function SettingsScreen() {
   const [newPinInput, setNewPinInput] = useState<string>('');
   const [confirmPinInput, setConfirmPinInput] = useState<string>('');
   const [pinChangeError, setPinChangeError] = useState<string | null>(null);
+
+  // IPTV Playlist Auto-reload State (3 a 5 dias)
+  const [reloadModalVisible, setReloadModalVisible] = useState<boolean>(false);
+  const [isReloadingList, setIsReloadingList] = useState<boolean>(false);
+
+  const handleSelectReloadDays = async (days: number) => {
+    const updated = await storage.saveSettings({ playlistReloadDays: days });
+    setSettings(updated);
+    setReloadModalVisible(false);
+  };
+
+  const handleForceReloadPlaylist = async () => {
+    if (!account) {
+      Alert.alert('Conta não encontrada', 'Faça login novamente.');
+      return;
+    }
+    setIsReloadingList(true);
+    try {
+      const client = new XtreamClient(account.serverUrl, account.username, account.password);
+      await Promise.all([
+        client.getLiveCategories(),
+        client.getVodCategories(),
+        client.getSeriesCategories(),
+      ]);
+      await storage.markPlaylistReloaded();
+      const updated = await storage.getSettings();
+      setSettings(updated);
+      Alert.alert(
+        'Lista Atualizada',
+        'Canais, filmes e séries foram sincronizados com sucesso junto ao servidor IPTV!'
+      );
+    } catch (e: any) {
+      Alert.alert('Erro ao Atualizar', e?.message || 'Falha ao conectar ao servidor IPTV.');
+    } finally {
+      setIsReloadingList(false);
+    }
+  };
+
+  const getLastReloadText = () => {
+    const last = settings?.lastPlaylistReloadTimestamp;
+    if (!last) return 'Nunca sincronizado';
+    const diffHours = Math.floor((Date.now() - last) / (1000 * 60 * 60));
+    if (diffHours < 1) return 'Atualizado há poucos minutos';
+    if (diffHours < 24) return `Atualizado há ${diffHours} horas`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `Atualizado há ${diffDays} ${diffDays === 1 ? 'dia' : 'dias'}`;
+  };
 
   const loadAllLists = async () => {
     try {
@@ -494,6 +543,48 @@ export default function SettingsScreen() {
         </FocusableItem>
       </View>
 
+      {/* Atualização da Lista IPTV (Opções de 3 a 5 dias) */}
+      <Text style={styles.sectionTitle}>Atualização da Lista IPTV</Text>
+      <View style={styles.card}>
+        {/* Recarregar a cada X dias */}
+        <FocusableItem
+          style={styles.settingRow}
+          onPress={() => setReloadModalVisible(true)}
+        >
+          <View style={styles.settingIcon}>
+            <Ionicons name="refresh-circle-outline" size={20} color={colors.primary} />
+          </View>
+          <View style={styles.settingDetails}>
+            <Text style={styles.settingTitle}>Recarregamento Automático</Text>
+            <Text style={styles.settingSub}>
+              Atualizar lista a cada {settings?.playlistReloadDays || 3} dias
+            </Text>
+          </View>
+          <View style={styles.badgeOption}>
+            <Text style={styles.badgeOptionText}>{settings?.playlistReloadDays || 3} dias</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </FocusableItem>
+
+        <View style={styles.divider} />
+
+        {/* Forçar Atualização Imediata */}
+        <FocusableItem style={styles.settingRow} onPress={handleForceReloadPlaylist}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="cloud-download-outline" size={20} color={colors.primaryAmber} />
+          </View>
+          <View style={styles.settingDetails}>
+            <Text style={styles.settingTitle}>Atualizar Lista Agora</Text>
+            <Text style={styles.settingSub}>{getLastReloadText()}</Text>
+          </View>
+          {isReloadingList ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Ionicons name="sync" size={18} color={colors.primaryAmber} />
+          )}
+        </FocusableItem>
+      </View>
+
       {/* Permissions Section */}
       <Text style={styles.sectionTitle}>Permissões do Sistema</Text>
       <View style={styles.card}>
@@ -669,6 +760,70 @@ export default function SettingsScreen() {
                 <Text style={styles.modalSaveBtnText}>Salvar PIN</Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal: Intervalo de Recarregamento da Lista (3 a 5 dias) */}
+      <Modal
+        visible={reloadModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setReloadModalVisible(false)}
+      >
+        <View style={styles.pinModalBackdrop}>
+          <View style={styles.pinModalCard}>
+            <View style={styles.pinIconCircle}>
+              <Ionicons name="refresh-circle" size={32} color={colors.primary} />
+            </View>
+            <Text style={styles.pinModalTitle}>Recarregar Lista IPTV</Text>
+            <Text style={styles.pinModalSubtitle}>
+              Defina de quantos em quantos dias o AxiPlayer deve sincronizar automaticamente a lista com o servidor:
+            </Text>
+
+            <View style={{ width: '100%', gap: 10, marginBottom: 20 }}>
+              {[3, 4, 5].map((days) => {
+                const isSelected = (settings?.playlistReloadDays || 3) === days;
+                return (
+                  <Pressable
+                    key={days}
+                    style={[
+                      styles.reloadDayOption,
+                      isSelected && styles.reloadDayOptionActive,
+                    ]}
+                    onPress={() => handleSelectReloadDays(days)}
+                  >
+                    <View style={styles.reloadDayOptionContent}>
+                      <Text
+                        style={[
+                          styles.reloadDayOptionTitle,
+                          isSelected && styles.reloadDayOptionTitleActive,
+                        ]}
+                      >
+                        A cada {days} dias
+                      </Text>
+                      {days === 3 ? (
+                        <View style={styles.recommendedBadge}>
+                          <Text style={styles.recommendedBadgeText}>Recomendado</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Ionicons
+                      name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={22}
+                      color={isSelected ? colors.primary : '#666'}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Pressable
+              style={styles.modalCancelBtnFull}
+              onPress={() => setReloadModalVisible(false)}
+            >
+              <Text style={styles.modalCancelBtnText}>Fechar</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -1465,5 +1620,68 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     lineHeight: 18,
+  },
+
+  /* Reload Days Settings */
+  badgeOption: {
+    backgroundColor: '#1b2234',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#263450',
+    marginRight: 6,
+  },
+  badgeOptionText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  reloadDayOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#0e0e15',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#222232',
+  },
+  reloadDayOptionActive: {
+    backgroundColor: '#131e33',
+    borderColor: colors.primary,
+  },
+  reloadDayOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  reloadDayOptionTitle: {
+    color: '#ccc',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  reloadDayOptionTitleActive: {
+    color: colors.primary,
+  },
+  recommendedBadge: {
+    backgroundColor: 'rgba(0, 229, 255, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  recommendedBadgeText: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  modalCancelBtnFull: {
+    width: '100%',
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#20202e',
+    borderRadius: 14,
   },
 });

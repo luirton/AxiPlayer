@@ -21,6 +21,7 @@ import { XtreamClient } from '../../src/services/xtreamClient';
 import { IptvCategory, VodMovie, SavedAccount } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { isAdultCategory } from '../../src/services/parentalControl';
+import { EnrichedPosterImage } from '../../src/components/common/EnrichedPosterImage';
 
 export default function MoviesScreen() {
   const router = useRouter();
@@ -140,20 +141,34 @@ export default function MoviesScreen() {
           setMovies(vods || []);
           if (vods && vods.length > 0) setHeroMovie(pickRandomMovie(vods));
           return;
+        } else {
+          // Marca de streaming não encontrada na lista IPTV do usuário
+          setSelectedCategory(params.brand);
+          setSelectedCategoryName(params.brandName || params.brand);
+          setSelectedBrandName(params.brandName || params.brand);
+          setMovies([]);
+          setHeroMovie(null);
+          return;
         }
       }
 
-      // Carga inicial: Categoria padrão ou primeira categoria com seleção aleatória do Hero
+      // Carga inicial para "Para você": Carrega filmes da primeira categoria para exibição instantânea
+      let initialVods: VodMovie[] = [];
       if (cats && cats.length > 0) {
-        const firstCatId = cats[0].category_id;
-        const vods = await client.getVodStreams(firstCatId);
-        setMovies(vods || []);
-        if (vods && vods.length > 0) setHeroMovie(pickRandomMovie(vods));
-      } else {
-        const vods = await client.getVodStreams();
-        setMovies(vods || []);
-        if (vods && vods.length > 0) setHeroMovie(pickRandomMovie(vods));
+        try {
+          initialVods = (await client.getVodStreams(cats[0].category_id)) || [];
+        } catch (e) {
+          console.warn('Erro ao carregar filmes da primeira categoria:', e);
+        }
       }
+      if (initialVods.length === 0) {
+        try {
+          const allVods = await client.getVodStreams();
+          initialVods = allVods || [];
+        } catch (e) {}
+      }
+      setMovies(initialVods);
+      if (initialVods.length > 0) setHeroMovie(pickRandomMovie(initialVods));
     } catch (err: any) {
       console.warn('Error loading movies:', err);
       setErrorMessage(err?.message || 'Falha ao carregar catálogo de filmes.');
@@ -178,11 +193,17 @@ export default function MoviesScreen() {
       }
 
       const client = new XtreamClient(account.serverUrl, account.username, account.password);
-      const vods = catId === 'for_you'
-        ? (categories.length > 0 ? await client.getVodStreams(categories[0].category_id) : await client.getVodStreams())
-        : catId === 'all'
-        ? await client.getVodStreams()
-        : await client.getVodStreams(catId);
+      let vods: VodMovie[] = [];
+      if (catId === 'for_you') {
+        const firstCatId = categories[0]?.category_id;
+        vods = firstCatId
+          ? (await client.getVodStreams(firstCatId)) || []
+          : (await client.getVodStreams()) || [];
+      } else if (catId === 'all') {
+        vods = (await client.getVodStreams()) || [];
+      } else {
+        vods = (await client.getVodStreams(catId)) || [];
+      }
 
       setMovies(vods || []);
       if (vods && vods.length > 0) {
@@ -299,7 +320,7 @@ export default function MoviesScreen() {
         id: movie.stream_id,
         type: 'movie',
         title: movie.name || 'Filme',
-        extension: movie.container_extension || 'mp4',
+        extension: movieDetails?.movie_data?.container_extension || movie.container_extension || 'mp4',
         icon: movie.stream_icon,
       },
     });
@@ -491,17 +512,13 @@ export default function MoviesScreen() {
                 <View style={styles.heroCardLandscape}>
                   {/* Pôster estilo Filmes Recentes no lado esquerdo */}
                   <View style={styles.heroLandscapePosterBox}>
-                    {heroMovie.stream_icon ? (
-                      <Image
-                        source={{ uri: heroMovie.stream_icon }}
-                        style={styles.heroLandscapePoster}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={styles.heroFallback}>
-                        <Ionicons name="film" size={48} color="#555" />
-                      </View>
-                    )}
+                    <EnrichedPosterImage
+                      sourceUri={heroMovie.stream_icon}
+                      title={heroMovie.name}
+                      type="movie"
+                      style={styles.heroLandscapePoster}
+                      contentFit="cover"
+                    />
                     {heroRating !== '0' ? (
                       <View style={styles.heroLandscapeRatingBadge}>
                         <Ionicons name="star" size={11} color="#FFD700" />
@@ -564,17 +581,13 @@ export default function MoviesScreen() {
                 </View>
               ) : (
                 <View style={styles.heroCard}>
-                  {heroMovie.stream_icon ? (
-                    <Image
-                      source={{ uri: heroMovie.stream_icon }}
-                      style={styles.heroImage}
-                      contentFit="cover"
-                    />
-                  ) : (
-                    <View style={styles.heroFallback}>
-                      <Ionicons name="film" size={64} color="#333" />
-                    </View>
-                  )}
+                  <EnrichedPosterImage
+                    sourceUri={heroMovie.stream_icon}
+                    title={heroMovie.name}
+                    type="movie"
+                    style={styles.heroImage}
+                    contentFit="cover"
+                  />
 
                   <LinearGradient
                     colors={['transparent', 'rgba(10,10,12,0.4)', 'rgba(10,10,12,0.98)']}
@@ -690,17 +703,13 @@ export default function MoviesScreen() {
                     onPress={() => handlePlayMovie(item)}
                   >
                     <View style={styles.cardPosterBox}>
-                      {item.stream_icon ? (
-                        <Image
-                          source={{ uri: item.stream_icon }}
-                          style={styles.cardPoster}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <View style={styles.cardPosterFallback}>
-                          <Ionicons name="film-outline" size={32} color="#555" />
-                        </View>
-                      )}
+                      <EnrichedPosterImage
+                        sourceUri={item.stream_icon}
+                        title={item.name}
+                        type="movie"
+                        style={styles.cardPoster}
+                        contentFit="cover"
+                      />
 
                       {ratingStr && ratingStr !== '0' ? (
                         <View style={styles.cardRatingBadge}>
@@ -746,17 +755,13 @@ export default function MoviesScreen() {
                     onPress={() => handlePlayMovie(item)}
                   >
                     <View style={[styles.gridPosterBox, { width: '100%', height: gridCardWidth * 1.5 }]}>
-                      {item.stream_icon ? (
-                        <Image
-                          source={{ uri: item.stream_icon }}
-                          style={styles.cardPoster}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <View style={styles.cardPosterFallback}>
-                          <Ionicons name="film-outline" size={28} color="#555" />
-                        </View>
-                      )}
+                      <EnrichedPosterImage
+                        sourceUri={item.stream_icon}
+                        title={item.name}
+                        type="movie"
+                        style={styles.cardPoster}
+                        contentFit="cover"
+                      />
                     </View>
                     <Text style={styles.cardTitle} numberOfLines={1}>
                       {item.name}
@@ -798,17 +803,13 @@ export default function MoviesScreen() {
           >
             {/* Backdrop / Imagem 16:9 no Topo */}
             <View style={styles.backdropWrapper}>
-              {selectedMovie?.stream_icon ? (
-                <Image
-                  source={{ uri: selectedMovie.stream_icon }}
-                  style={styles.backdropImage}
-                  contentFit="cover"
-                />
-              ) : (
-                <View style={styles.backdropFallback}>
-                  <Ionicons name="film" size={64} color="#333" />
-                </View>
-              )}
+              <EnrichedPosterImage
+                sourceUri={selectedMovie?.stream_icon}
+                title={selectedMovie?.name || ''}
+                type="movie"
+                style={styles.backdropImage}
+                contentFit="cover"
+              />
               <LinearGradient
                 colors={['transparent', 'rgba(7,7,9,0.5)', '#070709']}
                 style={styles.backdropGradient}

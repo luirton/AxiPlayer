@@ -45,11 +45,23 @@ export class XtreamClient {
     return `${this.serverUrl}/player_api.php?username=${encodedUser}&password=${encodedPass}`;
   }
 
+  private static apiCache = new Map<string, { data: any; timestamp: number }>();
+
+  public static clearCache(): void {
+    XtreamClient.apiCache.clear();
+  }
+
   /**
    * Executa requisições HTTP com User-Agent compatível com IPTV Smarters,
    * timeout controlado e fallback automático de SSL/TLS (https <-> http).
    */
   private async fetchJson<T>(url: string, timeoutMs: number = 20000): Promise<T> {
+    // Cache em memória para evitar re-download massivo de 20.000+ títulos da mesma URL
+    const cached = XtreamClient.apiCache.get(url);
+    if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000) {
+      return cached.data as T;
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -84,7 +96,9 @@ export class XtreamClient {
       }
 
       try {
-        return JSON.parse(text) as T;
+        const parsed = JSON.parse(text) as T;
+        XtreamClient.apiCache.set(url, { data: parsed, timestamp: Date.now() });
+        return parsed;
       } catch (parseErr) {
         if (text.includes('<html') || text.includes('<!DOCTYPE') || text.includes('<head')) {
           throw new Error('O servidor respondeu com uma página web (HTML) em vez de dados JSON. Verifique a URL e porta do provedor.');
@@ -154,10 +168,12 @@ export class XtreamClient {
 
   public async getVodStreams(categoryId?: string): Promise<VodMovie[]> {
     let url = `${this.getBaseApiUrl()}&action=get_vod_streams`;
-    if (categoryId && categoryId !== 'all') {
+    const isAll = !categoryId || categoryId === 'all';
+    if (!isAll) {
       url += `&category_id=${encodeURIComponent(categoryId)}`;
     }
-    const res = await this.fetchJson<any>(url);
+    const timeout = isAll ? 50000 : 20000;
+    const res = await this.fetchJson<any>(url, timeout);
     return Array.isArray(res) ? res : [];
   }
 
@@ -174,10 +190,12 @@ export class XtreamClient {
 
   public async getSeries(categoryId?: string): Promise<SeriesItem[]> {
     let url = `${this.getBaseApiUrl()}&action=get_series`;
-    if (categoryId && categoryId !== 'all') {
+    const isAll = !categoryId || categoryId === 'all';
+    if (!isAll) {
       url += `&category_id=${encodeURIComponent(categoryId)}`;
     }
-    const res = await this.fetchJson<any>(url);
+    const timeout = isAll ? 50000 : 20000;
+    const res = await this.fetchJson<any>(url, timeout);
     return Array.isArray(res) ? res : [];
   }
 

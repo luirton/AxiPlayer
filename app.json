@@ -22,7 +22,7 @@
         "backgroundColor": "#050505",
         "foregroundImage": "./assets/icon.png"
       },
-      "permissions": [
+                  "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
@@ -36,7 +36,7 @@
         "WAKE_LOCK",
         "FOREGROUND_SERVICE"
       ],
-      "predictiveBackGestureEnabled": false
+"predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"

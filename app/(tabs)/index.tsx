@@ -23,6 +23,7 @@ import { XtreamClient } from '../../src/services/xtreamClient';
 import { SavedAccount, LiveChannel, VodMovie } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { StreamingBrandsRow, StreamingBrand } from '../../src/components/home/StreamingBrands';
+import { EnrichedPosterImage } from '../../src/components/common/EnrichedPosterImage';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -87,11 +88,26 @@ export default function HomeScreen() {
 
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
 
-      // Usar Promise.allSettled para que a falha de um não impeça o outro
-      const [channelsRes, moviesRes] = await Promise.allSettled([
+      // Usar Promise.allSettled para carregar canais ao vivo e categorias rapidamente
+      const [channelsRes, vodCatsRes] = await Promise.allSettled([
         client.getLiveStreams(),
-        client.getVodStreams(),
+        client.getVodCategories(),
       ]);
+
+      let moviesData: VodMovie[] = [];
+      const firstCatId =
+        vodCatsRes.status === 'fulfilled' && Array.isArray(vodCatsRes.value) && vodCatsRes.value.length > 0
+          ? vodCatsRes.value[0].category_id
+          : undefined;
+
+      try {
+        const vods = firstCatId
+          ? await client.getVodStreams(firstCatId)
+          : await client.getVodStreams();
+        if (Array.isArray(vods)) moviesData = vods;
+      } catch (e) {
+        console.warn('Erro ao carregar filmes na Home:', e);
+      }
 
       let hasAnySuccess = false;
 
@@ -100,9 +116,9 @@ export default function HomeScreen() {
         hasAnySuccess = true;
       }
 
-      if (moviesRes.status === 'fulfilled' && Array.isArray(moviesRes.value) && moviesRes.value.length > 0) {
+      if (moviesData.length > 0) {
         // Seleção aleatória de destaque entre os títulos
-        const validMovies = moviesRes.value.filter((m) => m && m.name);
+        const validMovies = moviesData.filter((m) => m && m.name);
         const poolSize = Math.min(validMovies.length, 30);
         const randomIndex = Math.floor(Math.random() * poolSize);
         const chosenHero = validMovies[randomIndex] || validMovies[0];
@@ -113,12 +129,14 @@ export default function HomeScreen() {
         hasAnySuccess = true;
       }
 
+      if (hasAnySuccess) {
+        storage.markPlaylistReloaded().catch(() => {});
+      }
+
       if (!hasAnySuccess) {
         const errorDetail =
           channelsRes.status === 'rejected'
             ? channelsRes.reason?.message
-            : moviesRes.status === 'rejected'
-            ? moviesRes.reason?.message
             : null;
 
         if (errorDetail) {
@@ -305,17 +323,13 @@ export default function HomeScreen() {
                 <View style={styles.heroCardLandscape}>
                   {/* Pôster estilo Filmes Recentes no lado esquerdo */}
                   <View style={styles.heroLandscapePosterBox}>
-                    {heroItem.stream_icon ? (
-                      <Image
-                        source={{ uri: heroItem.stream_icon }}
-                        style={styles.heroLandscapePoster}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View style={styles.heroFallback}>
-                        <Ionicons name="film" size={48} color="#555" />
-                      </View>
-                    )}
+                    <EnrichedPosterImage
+                      sourceUri={heroItem.stream_icon}
+                      title={heroItem.name}
+                      type="movie"
+                      style={styles.heroLandscapePoster}
+                      contentFit="cover"
+                    />
                     {heroItem.rating && String(heroItem.rating) !== '0' ? (
                       <View style={styles.heroLandscapeRatingBadge}>
                         <Ionicons name="star" size={11} color="#FFD700" />
@@ -371,17 +385,13 @@ export default function HomeScreen() {
                 </View>
               ) : (
                 <View style={styles.heroCard}>
-                  {heroItem.stream_icon ? (
-                    <Image
-                      source={{ uri: heroItem.stream_icon }}
-                      style={styles.heroImage}
-                      contentFit="cover"
-                    />
-                  ) : (
-                    <View style={styles.heroFallback}>
-                      <Ionicons name="film" size={64} color="#333" />
-                    </View>
-                  )}
+                  <EnrichedPosterImage
+                    sourceUri={heroItem.stream_icon}
+                    title={heroItem.name}
+                    type="movie"
+                    style={styles.heroImage}
+                    contentFit="cover"
+                  />
 
                   <LinearGradient
                     colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(10,10,12,0.95)']}
@@ -466,17 +476,14 @@ export default function HomeScreen() {
                       }}
                     >
                       <View style={styles.continuePosterBox}>
-                        {item.poster ? (
-                          <Image
-                            source={{ uri: item.poster }}
-                            style={styles.continuePoster}
-                            contentFit="cover"
-                          />
-                        ) : (
-                          <View style={styles.continuePosterFallback}>
-                            <Ionicons name="play-circle-outline" size={36} color={colors.primary} />
-                          </View>
-                        )}
+                        <EnrichedPosterImage
+                          sourceUri={item.poster}
+                          title={item.title}
+                          type={item.type === 'series' ? 'series' : 'movie'}
+                          style={styles.continuePoster}
+                          contentFit="cover"
+                          fallbackIcon={item.type === 'series' ? 'albums-outline' : 'play-circle-outline'}
+                        />
                         <View style={styles.playFloatingIcon}>
                           <Ionicons name="play" size={14} color="#000" />
                         </View>
@@ -527,19 +534,14 @@ export default function HomeScreen() {
                     }}
                   >
                     <View style={styles.moviePosterBox}>
-                      {item.poster ? (
-                        <Image
-                          source={{ uri: item.poster }}
-                          style={styles.moviePoster}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <Ionicons
-                          name={item.type === 'movie' ? 'film-outline' : 'albums-outline'}
-                          size={36}
-                          color={colors.textMuted}
-                        />
-                      )}
+                      <EnrichedPosterImage
+                        sourceUri={item.poster}
+                        title={item.title}
+                        type={item.type === 'series' ? 'series' : 'movie'}
+                        style={styles.moviePoster}
+                        contentFit="cover"
+                        fallbackIcon={item.type === 'series' ? 'albums-outline' : 'film-outline'}
+                      />
                       <View style={styles.watchLaterTypeBadge}>
                         <Text style={styles.watchLaterTypeText}>
                           {item.type === 'movie' ? 'Filme' : 'Série'}
@@ -668,15 +670,14 @@ export default function HomeScreen() {
                     }}
                   >
                     <View style={styles.moviePosterBox}>
-                      {item.stream_icon ? (
-                        <Image
-                          source={{ uri: item.stream_icon }}
-                          style={styles.moviePoster}
-                          contentFit="cover"
-                        />
-                      ) : (
-                        <Ionicons name="film-outline" size={36} color={colors.textMuted} />
-                      )}
+                      <EnrichedPosterImage
+                        sourceUri={item.stream_icon}
+                        title={item.name}
+                        type="movie"
+                        style={styles.moviePoster}
+                        contentFit="cover"
+                        fallbackIcon="film-outline"
+                      />
                     </View>
                     <Text style={styles.movieItemName} numberOfLines={1}>
                       {item.name}
