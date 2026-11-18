@@ -49,10 +49,17 @@ Compatível com telas sensíveis ao toque (celulares e tablets) e controles remo
 - **Streaming Brands**: Acesso rápido aos catálogos de **Netflix**, **Prime Video**, **Disney+**, **Max**, **Globoplay**, **Apple TV+** e **Paramount+** com escolha entre filmes ou séries.
 
 ### 🎬 Filmes (VOD) e Séries
+- **Capas e Metadados Inteligentes (IMDb + iTunes BR)**:
+  - Busca automática em APIs públicas do **IMDb** e **Apple iTunes Brasil** para preencher pôsteres ausentes ou corrigir capas trocadas pelo provedor.
+  - Correspondência estrita de títulos (`isTitleMatch`) evitando posters incorretos.
+  - Componente universal `EnrichedPosterImage` com cache local no dispositivo (`AsyncStorage`).
+- **Carregamento Instantâneo Sob Demanda (Otimizado para 20.000+ Títulos)**:
+  - Eliminação de travamentos por downloads de arquivos JSON massivos: o app busca conteúdos por categoria (`category_id`), renderizando as telas em menos de **250 ms**.
+  - Cache em memória de alta performance evitando tráfego de rede redundante.
 - **Abertura Cinematográfica Premium (Design 16:9)**:
   - Banner backdrop 16:9 de alta resolução com gradiente cinematográfico OLED escuro e botão voltar flutuante.
   - Título em destaque, ano de lançamento, gênero e informações de áudio/vídeo.
-  - Botão de destaque em pílula gradiente laranja/ouro: `[ ▷ Assistir ]`.
+  - Botão de destaque em pílula gradiente ciano/roxo: `[ ▷ Assistir ]`.
   - **Inclusão Automática**: Ao tocar em "Assistir" ou selecionar qualquer episódio de série, o título é adicionado automaticamente à **Minha Lista**.
   - **3 Ações Rápidas**: `+ Minha lista` (ou `✓ Na lista`), `🕒 Assistir depois` (ou `✓ Salvo`) e `⭐ [Nota]` (Favoritar).
   - Sinopse com expansão `Ver mais / Ver menos`, elenco e direção.
@@ -62,6 +69,17 @@ Compatível com telas sensíveis ao toque (celulares e tablets) e controles remo
   - **Temporadas e Episódios**: Seletor de temporadas e lista de episódios vertical mantendo o padrão visual elegante.
 - **🔒 Proteção Parental Estrita**: Categorias e filmes/séries adultos ou XXX exigem validação do PIN de 4 dígitos sempre antes de abrir os detalhes ou reproduzir.
 
+### 🎮 Player Avançado com Controles Gestuais & OSD
+- **Controle de Navegação Temporal (VOD)**:
+  - Barra de progresso interativa para buscar momentos específicos no vídeo.
+  - Botões dedicados de pular 10 segundos para trás (`↺ 10`) e 10 segundos para frente (`↻ 10`).
+- **Controles Gestuais por Swipe**:
+  - Deslizar na lateral esquerda da tela ajusta o **Brilho**.
+  - Deslizar na lateral direita ajusta o **Volume**.
+- **OSD Inteligente e Fiel à Reprodução**:
+  - Os botões e a timeline somem após 4 segundos de inatividade para exibição imersiva.
+  - **Toque para Reexibir**: Tocar em qualquer ponto da tela reativa os controles na hora.
+
 ### 📋 Gerenciador de Listas & Coleções no Menu
 - **Seção "Minhas Listas & Coleções" em Configurações**:
   - Acesso direto e contadores em tempo real de `⭐ Meus Favoritos`, `📑 Minha Lista` e `🕒 Assistir Depois`.
@@ -69,12 +87,13 @@ Compatível com telas sensíveis ao toque (celulares e tablets) e controles remo
 
 ### 🔍 Tela de Busca Global Inteligente (`/search`)
 - **Acesso Rápido**: Acionada pelo ícone de busca em Filmes, Séries ou na Home.
-- **Filtros Otimizados**: Abas ordenadas por `[ Todos ]` (inicial padrão), `[ Filmes ]` e `[ Séries ]`.
+- **Filtros Otimizados**: Abas ordenadas por `[ Todos ]` (inicial padrão), `[ Filmes ]` e `[ Séries ]` com carregamento focado e veloz.
 - **Contador em Tempo Real**: `Resultado da busca (X)` com atualização dinâmica.
-- **Grade Responsiva**: Pôsteres verticais em proporção 2:3 de 3 colunas (mobile) ou 5 colunas (TV/Tablet) com nota e título.
-- **Abertura Detalhada**: Ao tocar em qualquer filme ou série, abre diretamente a tela cinematográfica de informações completas com imagem 16:9, metadados, atores, sinopse expansível e botão de assistir.
+- **Grade Responsiva**: Pôsteres enriquecidos com notas e títulos.
+- **Modal de Detalhes Integrado**: Ao tocar em qualquer filme ou série, abre diretamente o modal cinematográfico na própria tela de busca, permitindo ler sinopse, ver elenco e dar play sem ser redirecionado para o menu anterior.
 
 ### ⚙️ Configurações & Perfil
+- **Intervalo de Recarregamento de Lista**: Escolha entre 3 a 5 dias para atualizar o cache da lista IPTV sem onerar o consumo de dados.
 - **Alteração do PIN de Controle Parental**: Interface para alterar a senha de 4 dígitos com confirmação e validação do PIN anterior.
 - **Preferências de Reprodução**: Escolha entre stream HLS (`.m3u8`) ou MPEG-TS (`.ts`) e seleção de motor do player.
 

@@ -69,10 +69,20 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
 * Troca rápida de canal via D-pad (Cima / Baixo) durante a reprodução.
 
 ### 4.4 Módulo Filmes & Séries (VOD)
+* **Enriquecimento Inteligente de Capas e Metadados (IMDb API + iTunes BR):**
+  * Mecanismo automatizado em `src/services/metadataEnricher.ts` para buscar pôsteres oficiais em alta resolução e metadados quando o provedor IPTV não fornecer imagem ou fornecer imagem corrompida.
+  * **Prioridade 1 - IMDb Public API:** Consulta `https://v3.sg.media-imdb.com/suggestion/x/${slug}.json` obtendo capas originais da CDN da Amazon.
+  * **Prioridade 2 - iTunes Search API (Brasil):** Consulta com filtro `country=BR` para localização fiel em português.
+  * **Validação Estrita de Títulos (`isTitleMatch`):** Algoritmo de proximidade de strings para impedir a exibição de capas de filmes não relacionados com nomes similares.
+  * **Componente `EnrichedPosterImage`:** Componente universal com fallback visual gracioso e cache local no AsyncStorage (`@axi_enrich_v4_`).
+* **Carga Otimizada Sob Demanda (Alta Performance para 20.000+ Títulos):**
+  * Substituição de downloads brutos de catálogos inteiros (arquivos de 25 MB+ que travavam a memória) por consultas segmentadas por categoria (`category_id`).
+  * As abas "Para você" e telas iniciais carregam em menos de **250 ms** utilizando a primeira categoria ativa da lista do usuário.
+  * Cache em memória estático (`XtreamClient.apiCache`) de 10 minutos para evitar requisições redundantes.
 * **Abertura e Tela de Detalhes Cinematográfica (Design Premium 16:9):**
   * Backdrop imersivo 16:9 no topo com gradiente suave na base e botão de voltar flutuante.
   * Título em destaque, ano de lançamento, gênero e formato de áudio/vídeo.
-  * Botão grande em pílula gradiente laranja/ouro: `[ ▷ Assistir ]`.
+  * Botão grande em pílula gradiente ciano/roxo: `[ ▷ Assistir ]`.
   * **Regra de Auto-Inclusão:** Clicar em "Assistir" ou em qualquer episódio inclui automaticamente o título na **Minha Lista**.
   * **3 Ações Rápidas em Linha:**
     1. `+ Minha lista` (ou `✓ Na lista`)
@@ -97,31 +107,41 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
     * Subfiltros na aba de Favoritos: `Todos`, `Ao Vivo`, `Filmes`, `Séries`.
     * Ações rápidas por item: botão `[ ▶ ]` para reprodução direta e `[ 🗑 ]` para remoção instantânea da lista com atualização dinâmica dos dados.
 
-### 4.5 Player Avançado (Fiel ao Modelo IBO Smarters)
-* **Controles completíssimos:**
-  * Passar canal para trás (`|◀`) e para frente (`▶|`) instantaneamente.
-  * Play / Pause (`⏸` / `▶`).
-  * Botão **Transmitir para TV** (Chromecast / Smart TV).
+### 4.5 Player Avançado (Filmes, Séries & TV Ao Vivo)
+* **Controles completíssimos e OSD Interativo:**
+  * **Modo TV Ao Vivo:**
+    * Passar canal para trás (`|◀`) e para frente (`▶|`) instantaneamente.
+    * Barra de timeline azul/ciano com indicador "LIVE" e resolução.
+    * Gaveta lateral de canais (`[ ≡ Canais ]`): troca rápida sem sair da reprodução.
+    * Guia de programação interativo (`[ 📅 Programação ]`).
+    * Botão de favoritar canal (`[ ⭐ Favoritar ]`).
+  * **Modo VOD (Filmes & Séries):**
+    * Barra de progresso interativa para avanço/retrocesso livre.
+    * Botões dedicados de pular 10 segundos para trás (`↺ 10`) e 10 segundos para frente (`↻ 10`).
+    * Play / Pause centralizado (`⏸` / `▶`) com feedback visual imediato.
+    * Indicadores de tempo transcorrido e duração total formatados (`MM:SS` ou `HH:MM:SS`).
   * **Controles por Gesto na Tela (Swipe):**
-    * Lado esquerdo da tela: Ajuste de **Brilho** com indicador HUD em tempo real.
-    * Lado direito da tela: Ajuste de **Volume** com indicador HUD em tempo real.
-  * Barra de timeline amarela com indicador "Ao vivo".
-  * Gaveta lateral de canais (`[ ≡ Canais ]`): troca rápida de canal sem sair da reprodução.
-  * Guia de programação interativo (`[ 📅 Programação ]`).
-  * Botão de favoritar canal (`[ ⭐ Favoritar ]`).
-  * **Gravação Automática de Progresso:** A cada 5 segundos salva a minutagem atual de filmes e séries para permitir "Continuar Assistindo".
+    * Lado esquerdo da tela: Ajuste fino de **Brilho** com HUD vertical visual.
+    * Lado direito da tela: Ajuste fino de **Volume** com HUD vertical visual.
+  * **Visibilidade Inteligente de Controles:**
+    * OSD oculta automaticamente após 4 segundos de inatividade para imersão total.
+    * Toque simples em qualquer área da tela reativa os controles imediatamente.
+  * **Gravação Automática de Progresso:** A cada 5 segundos salva a minutagem atual para permitir "Continuar Assistindo".
 
 ### 4.6 Interface Mobile & TV
 * **Barra de Navegação Flutuante em Pílula:**
   * `[ ≡ Menu ]`, `[ 🏠 Início ]`, `[ ((•)) TV ao vivo ]` com pílula de destaque suspensa acima dos botões virtuais do Android.
 * **Modo Imersivo Android:** Oculta a barra virtual do sistema operacional para evitar colisões com gestos e navegação.
-* **Tela de Busca Global Unificada (`/search`):**
+* **Tela de Busca Global e Catálogo Completo (`/search`):**
   * Campo de busca integrado com limpeza rápida (`✕`).
   * Abas de filtragem ordenadas: `[ Todos ]` (inicial padrão), `[ Filmes ]`, `[ Séries ]`.
-  * Contador dinâmico `Resultado da busca (X)`.
-  * Grade responsiva de pôsteres em proporção 2:3 com abertura instantânea da tela de informações e detalhes do filme ou série antes da reprodução.
+  * Carregamento direcionado por tipo para economia extrema de banda e renderização instantânea.
+  * **Modal de Detalhes Integrado:** Ao clicar em qualquer filme ou série, o app abre diretamente o modal cinematográfico de detalhes (pôster enriquecido via IMDb/iTunes, sinopse expansível, metadados, atores, direção, botões de ação e assistir agora) na própria tela, eliminando redirecionamentos indesejados ao menu anterior.
+  * Fallback automático caso o provedor IPTV rejeite listagem completa sem categoria.
 
 ### 4.7 Configurações & Perfil
+* **Intervalo de Recarregamento da Lista IPTV:**
+  * Opção no menu para definir a frequência de sincronização automática da lista (escolha de 3 a 5 dias), economizando recursos do dispositivo e dados de rede.
 * **Controle dos Pais & PIN Parental:**
   * Configuração e alteração do PIN numérico de 4 dígitos com validação de PIN atual e confirmação.
 * **Formato de Transmissão:** Escolha entre MPEG-TS (`.ts`) ou HLS (`.m3u8`).

@@ -313,6 +313,29 @@ export default function SeriesScreen() {
     await storage.addToMyList(mediaItem);
     setIsSeriesInList(true);
 
+    // Verifica se já existe o último episódio visto salvo desta série para continuar diretamente
+    const saved = await storage.getWatchProgress(series.series_id);
+    if (saved && saved.id) {
+      setSelectedSeries(null);
+      router.push({
+        pathname: '/player/[id]',
+        params: {
+          id: String(saved.id),
+          type: 'series',
+          title: saved.title,
+          extension: saved.extension || 'mp4',
+          icon: saved.poster || series.cover,
+          streamUrl: saved.streamUrl || '',
+          startPosition: String(saved.positionSec || 0),
+          seriesId: String(series.series_id),
+          seriesTitle: series.name,
+          seasonNum: saved.seasonNum ? String(saved.seasonNum) : undefined,
+          episodeNum: saved.episodeNum ? String(saved.episodeNum) : undefined,
+        },
+      });
+      return;
+    }
+
     // Encontra o primeiro episódio disponível
     const currentSeasonEps = seriesInfo?.episodes?.[activeSeason] || [];
     const firstEp = currentSeasonEps[0] || Object.values(seriesInfo?.episodes || {})?.[0]?.[0];
@@ -327,6 +350,10 @@ export default function SeriesScreen() {
           title: `${series.name} - T${activeSeason}:E${firstEp.episode_num} ${firstEp.title || ''}`,
           extension: firstEp.container_extension || 'mp4',
           icon: series.cover,
+          seriesId: String(series.series_id),
+          seriesTitle: series.name,
+          seasonNum: String(activeSeason),
+          episodeNum: String(firstEp.episode_num),
         },
       });
     }
@@ -361,6 +388,10 @@ export default function SeriesScreen() {
         title: `${series.name} - T${seasonNum}:E${ep.episode_num} ${ep.title || ''}`,
         extension: ep.container_extension || 'mp4',
         icon: series.cover,
+        seriesId: String(series.series_id),
+        seriesTitle: series.name,
+        seasonNum: String(seasonNum),
+        episodeNum: String(ep.episode_num),
       },
     });
   };

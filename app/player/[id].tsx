@@ -22,7 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { colors } from '../../src/theme/colors';
-import { storage } from '../../src/services/storage';
+import { storage, WatchProgressItem } from '../../src/services/storage';
 import { XtreamClient } from '../../src/services/xtreamClient';
 import { LiveChannel, EpgProgram, SavedAccount } from '../../src/types/iptv';
 import { enrichMediaMetadata } from '../../src/services/metadataEnricher';
@@ -36,6 +36,12 @@ export default function PlayerScreen() {
     extension?: string;
     icon?: string;
     categoryName?: string;
+    streamUrl?: string;
+    startPosition?: string;
+    seriesId?: string;
+    seriesTitle?: string;
+    seasonNum?: string;
+    episodeNum?: string;
   }>();
 
   const isVod = params.type === 'movie' || params.type === 'series';
@@ -120,11 +126,10 @@ export default function PlayerScreen() {
   const seekbarWidthRef = useRef<number>(0);
   const seekbarStartLocationXRef = useRef<number>(0);
 
-  // Video Player instance linked to videoSource state
+  // Video Player instance linked to videoSource state (sem p.play() no mount com source null)
   const player = useVideoPlayer(videoSource, (p) => {
     p.loop = false;
     p.timeUpdateEventInterval = 0.5;
-    p.play();
   });
 
   // Track player events
@@ -169,6 +174,7 @@ export default function PlayerScreen() {
           }
         } catch (e) {}
       } else if (event.status === 'error') {
+        if (!videoSource) return;
         console.warn('Player status error event:', event);
         handleStreamErrorFallback();
       }
@@ -289,30 +295,46 @@ export default function PlayerScreen() {
     setLoading(true);
     setErrorMessage(null);
 
-    // Watchdog timer: If loading takes longer than 7 seconds, trigger fallback automatically
+    // Watchdog timer: If loading takes longer than 10 seconds, trigger fallback automatically
     if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
     loadingWatchdogRef.current = setTimeout(() => {
-      console.log('[Player Watchdog] Vídeo demorou mais de 7s para carregar. Tentando fallback...');
+      console.log('[Player Watchdog] Vídeo demorou mais de 10s para carregar. Tentando fallback...');
       handleStreamErrorFallback();
-    }, 7000);
+    }, 10000);
 
     try {
       const settings = await storage.getSettings();
       const client = new XtreamClient(acc.serverUrl, acc.username, acc.password);
 
-      let url = '';
-      if (params.type === 'live' || !params.type) {
-        const format = customExtension || settings.streamFormat || 'm3u8';
-        currentFormatRef.current = format;
-        url = client.getLiveStreamUrl(streamId, format as 'ts' | 'm3u8');
-      } else if (params.type === 'movie') {
-        const ext = customExtension || currentFormatRef.current || params.extension || 'mp4';
-        currentFormatRef.current = ext;
-        url = client.getMovieStreamUrl(streamId, ext);
-      } else if (params.type === 'series') {
-        const ext = customExtension || currentFormatRef.current || params.extension || 'mp4';
-        currentFormatRef.current = ext;
-        url = client.getEpisodeStreamUrl(streamId, ext);
+      let url = params.streamUrl || '';
+      let savedProgress: WatchProgressItem | null = null;
+      if (isVod) {
+        savedProgress = await storage.getWatchProgress(streamId, params.title || currentTitle);
+        if (!savedProgress && params.seriesId) {
+          savedProgress = await storage.getWatchProgress(params.seriesId, params.seriesTitle || params.title);
+        }
+        if (!url && savedProgress?.streamUrl) {
+          url = savedProgress.streamUrl;
+          if (savedProgress.extension) {
+            currentFormatRef.current = savedProgress.extension;
+          }
+        }
+      }
+
+      if (!url) {
+        if (params.type === 'live' || !params.type) {
+          const format = customExtension || settings.streamFormat || 'm3u8';
+          currentFormatRef.current = format;
+          url = client.getLiveStreamUrl(streamId, format as 'ts' | 'm3u8');
+        } else if (params.type === 'movie') {
+          const ext = customExtension || currentFormatRef.current || params.extension || 'mp4';
+          currentFormatRef.current = ext;
+          url = client.getMovieStreamUrl(streamId, ext);
+        } else if (params.type === 'series') {
+          const ext = customExtension || currentFormatRef.current || params.extension || 'mp4';
+          currentFormatRef.current = ext;
+          url = client.getEpisodeStreamUrl(streamId, ext);
+        }
       }
 
       setStreamUrl(url);
@@ -333,14 +355,14 @@ export default function PlayerScreen() {
           player.replace(nextSource);
           player.play();
 
-          // Restore watch progress for Movies / Series
+          // Restore watch progress for Movies / Series usando startPosition ou progresso salvo
           if (isVod) {
-            const saved = await storage.getWatchProgress(params.id);
-            if (saved && saved.positionSec > 10) {
+            const targetPos = params.startPosition ? Number(params.startPosition) : (savedProgress?.positionSec || 0);
+            if (targetPos > 2) {
               setTimeout(() => {
                 try {
-                  player.currentTime = saved.positionSec;
-                  setCurrentTime(saved.positionSec);
+                  player.currentTime = targetPos;
+                  setCurrentTime(targetPos);
                 } catch (e) {}
               }, 400);
             }
@@ -577,7 +599,7 @@ export default function PlayerScreen() {
     resetControlsTimer();
   };
 
-  // Save Watch Progress for Movies & Series
+  // Save Watch Progress for Movies & Series com o link que deu certo
   useEffect(() => {
     if (!isVod) return;
 
@@ -591,6 +613,11 @@ export default function PlayerScreen() {
           positionSec: Math.floor(player.currentTime),
           durationSec: Math.floor(player.duration),
           extension: currentFormatRef.current || params.extension,
+          streamUrl: streamUrl || undefined,
+          seriesId: params.seriesId ? String(params.seriesId) : undefined,
+          seriesTitle: params.seriesTitle || undefined,
+          seasonNum: params.seasonNum ? Number(params.seasonNum) : undefined,
+          episodeNum: params.episodeNum ? Number(params.episodeNum) : undefined,
         });
       }
     };
@@ -600,7 +627,7 @@ export default function PlayerScreen() {
       clearInterval(interval);
       saveCurrentProgress();
     };
-  }, [player, currentStreamId, currentTitle, isVod]);
+  }, [player, currentStreamId, currentTitle, isVod, streamUrl, params]);
 
   // Controls Visibility Auto-hide Timer
   const resetControlsTimer = () => {

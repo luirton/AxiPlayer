@@ -457,22 +457,23 @@ export default function HomeScreen() {
                     <FocusableItem
                       style={styles.continueCardItem}
                       onPress={() => {
-                        if (item.type === 'movie') {
-                          router.push({
-                            pathname: '/(tabs)/movies',
-                            params: { movieId: String(item.id) },
-                          });
-                        } else if (item.type === 'series') {
-                          router.push({
-                            pathname: '/(tabs)/series',
-                            params: { seriesId: String(item.id) },
-                          });
-                        } else {
-                          router.push({
-                            pathname: '/(tabs)/live',
-                            params: { channelId: item.id, autoFullscreen: '1' },
-                          });
-                        }
+                        // Continua assistindo diretamente no player usando o link que deu certo
+                        router.push({
+                          pathname: '/player/[id]',
+                          params: {
+                            id: String(item.id),
+                            type: item.type,
+                            title: item.title,
+                            extension: item.extension || 'mp4',
+                            icon: item.poster || '',
+                            streamUrl: item.streamUrl || '',
+                            startPosition: String(item.positionSec || 0),
+                            seriesId: item.seriesId ? String(item.seriesId) : undefined,
+                            seriesTitle: item.seriesTitle || undefined,
+                            seasonNum: item.seasonNum ? String(item.seasonNum) : undefined,
+                            episodeNum: item.episodeNum ? String(item.episodeNum) : undefined,
+                          },
+                        });
                       }}
                     >
                       <View style={styles.continuePosterBox}>
