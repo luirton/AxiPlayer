@@ -13,6 +13,7 @@ import {
   Alert,
   Platform,
   ScrollView,
+  BackHandler,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView, VideoSource } from 'expo-video';
@@ -26,6 +27,7 @@ import { storage, WatchProgressItem } from '../../src/services/storage';
 import { XtreamClient } from '../../src/services/xtreamClient';
 import { LiveChannel, EpgProgram, SavedAccount } from '../../src/types/iptv';
 import { enrichMediaMetadata } from '../../src/services/metadataEnricher';
+import { findAlternativeMovieVersions, AlternativeMovieVersion } from '../../src/services/iptvVersions';
 
 export default function PlayerScreen() {
   const router = useRouter();
@@ -107,6 +109,16 @@ export default function PlayerScreen() {
     visible: boolean;
   }>({ type: 'volume', value: 1.0, visible: false });
 
+  // Modais de Saída Inteligente e Versões Alternativas (Padrão AxiTV)
+  const [showExitConfirm, setShowExitConfirm] = useState<boolean>(false);
+  const [showErrorVersionModal, setShowErrorVersionModal] = useState<boolean>(false);
+  const [suggestedNextVersion, setSuggestedNextVersion] = useState<AlternativeMovieVersion | null>(null);
+  const [isSearchingNextVersion, setIsSearchingNextVersion] = useState<boolean>(false);
+  const [autoSwitchNotice, setAutoSwitchNotice] = useState<string | null>(null);
+  const triedIdsRef = useRef<Set<number>>(new Set([Number(params.id)]));
+  const playbackFailureTriggeredRef = useRef<boolean>(false);
+  const currentTimeRef = useRef<number>(0);
+
   // Stream format fallback state (e.g. m3u8 <-> ts for live, mp4 <-> mkv for VOD)
   const currentFormatRef = useRef<string>(params.extension || (isVod ? 'mp4' : 'm3u8'));
   const fallbackAttemptedRef = useRef<boolean>(false);
@@ -141,14 +153,19 @@ export default function PlayerScreen() {
       if (event.isPlaying) {
         setLoading(false);
         setErrorMessage(null);
+        setAutoSwitchNotice(null);
+        playbackFailureTriggeredRef.current = false;
         if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
       }
     });
 
     const timeSub = player.addListener('timeUpdate', (event) => {
+      currentTimeRef.current = event.currentTime;
       if (event.currentTime > 0) {
         setLoading(false);
         setErrorMessage(null);
+        setAutoSwitchNotice(null);
+        playbackFailureTriggeredRef.current = false;
         if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
       }
       if (!isScrubbing) {
@@ -163,6 +180,8 @@ export default function PlayerScreen() {
       if (event.status === 'readyToPlay') {
         setLoading(false);
         setErrorMessage(null);
+        setAutoSwitchNotice(null);
+        playbackFailureTriggeredRef.current = false;
         if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
         // Refresh available audio and subtitle tracks
         try {
@@ -208,7 +227,11 @@ export default function PlayerScreen() {
 
   // Load stream, account, channels list, and favorites on mount
   useEffect(() => {
+    triedIdsRef.current = new Set([Number(params.id)]);
     fallbackAttemptedRef.current = false;
+    playbackFailureTriggeredRef.current = false;
+    currentTimeRef.current = 0;
+    setAutoSwitchNotice(null);
     initPlayer();
   }, [params.id, params.type]);
 
@@ -294,10 +317,12 @@ export default function PlayerScreen() {
     setLoading(true);
     setErrorMessage(null);
 
-    // Watchdog timer: If loading takes longer than 10 seconds, trigger fallback automatically
+    // Watchdog timer: If loading takes longer than 10 seconds without playing, trigger fallback automatically
     if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
     loadingWatchdogRef.current = setTimeout(() => {
-      handleStreamErrorFallback();
+      if (currentTimeRef.current <= 0) {
+        handleStreamErrorFallback();
+      }
     }, 10000);
 
     try {
@@ -307,9 +332,9 @@ export default function PlayerScreen() {
       let url = params.streamUrl || '';
       let savedProgress: WatchProgressItem | null = null;
       if (isVod) {
-        savedProgress = await storage.getWatchProgress(streamId, params.title || currentTitle);
+        savedProgress = await storage.getWatchProgress(streamId, params.title || currentTitle, acc.id);
         if (!savedProgress && params.seriesId) {
-          savedProgress = await storage.getWatchProgress(params.seriesId, params.seriesTitle || params.title);
+          savedProgress = await storage.getWatchProgress(params.seriesId, params.seriesTitle || params.title, acc.id);
         }
         if (!url && savedProgress?.streamUrl) {
           url = savedProgress.streamUrl;
@@ -376,14 +401,120 @@ export default function PlayerScreen() {
     }
   };
 
-  // Automatic Fallback Engine:
-  // If Live m3u8 fails, auto-fallback to ts (and vice-versa).
-  // If Movie/Series mp4 fails, auto-fallback to mkv (and vice-versa).
-  const handleStreamErrorFallback = () => {
-    if (fallbackAttemptedRef.current) {
-      if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
+  // Detecção Automática de Falha & Troca para Próxima Versão (Auto-Fallback Padrão AxiTV)
+  const handlePlaybackFailure = async () => {
+    if (playbackFailureTriggeredRef.current) return;
+    playbackFailureTriggeredRef.current = true;
+
+    if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
+
+    // 1. Caso Filme (VOD): Busca e troca AUTOMÁTICA para próxima versão disponível na lista IPTV
+    if (params.type === 'movie') {
+      try {
+        const titleToSearch = currentTitle || params.title || '';
+        const idToExclude = currentStreamId || Number(params.id);
+        triedIdsRef.current.add(idToExclude);
+
+        setLoading(true);
+        setAutoSwitchNotice('Verificando outras versões deste título...');
+
+        const found = await findAlternativeMovieVersions(
+          titleToSearch,
+          idToExclude,
+          params.categoryName
+        );
+
+        // Encontra a primeira versão que ainda não foi tentada
+        const nextVer = found.find((v) => !triedIdsRef.current.has(Number(v.stream_id)));
+
+        if (nextVer) {
+          const nextId = Number(nextVer.stream_id);
+          const nextExt = nextVer.container_extension || 'mp4';
+          triedIdsRef.current.add(nextId);
+          currentFormatRef.current = nextExt;
+          setCurrentStreamId(nextId);
+          setCurrentTitle(nextVer.name);
+          setAutoSwitchNotice(`Link indisponível. Mudando para: ${nextVer.category_name}...`);
+
+          playbackFailureTriggeredRef.current = false;
+          loadStream(nextId, account || undefined, nextExt);
+          return;
+        }
+      } catch (e) {
+        console.warn('Erro ao realizar auto-fallback de versões:', e);
+      }
+
+      // Se nenhuma versão alternativa foi encontrada ou todas falharam:
+      setAutoSwitchNotice(null);
       setLoading(false);
-      setErrorMessage('Não foi possível carregar a transmissão. O link pode estar indisponível no servidor.');
+      playbackFailureTriggeredRef.current = false;
+      setErrorMessage('Erro no servidor ou vídeo indisponível. Não foi possível reproduzir nenhuma versão deste título na lista.');
+      setShowErrorVersionModal(true);
+      setSuggestedNextVersion(null);
+      return;
+    }
+
+    // 2. Caso Série (VOD): Tenta alternância de extensão (mp4 <-> mkv)
+    if (params.type === 'series') {
+      if (!fallbackAttemptedRef.current) {
+        fallbackAttemptedRef.current = true;
+        playbackFailureTriggeredRef.current = false;
+        const current = currentFormatRef.current.toLowerCase();
+        const fallback = current === 'mp4' ? 'mkv' : 'mp4';
+        setAutoSwitchNotice('Ajustando formato do vídeo...');
+        loadStream(currentStreamId, account || undefined, fallback);
+        return;
+      }
+      setAutoSwitchNotice(null);
+      setLoading(false);
+      playbackFailureTriggeredRef.current = false;
+      setErrorMessage('Erro no servidor ou episódio indisponível.');
+      return;
+    }
+
+    // 3. Caso TV Ao Vivo (Live): Tenta alternância de formato (m3u8 <-> ts)
+    if (params.type === 'live' || !params.type) {
+      if (!fallbackAttemptedRef.current) {
+        fallbackAttemptedRef.current = true;
+        playbackFailureTriggeredRef.current = false;
+        const current = currentFormatRef.current;
+        const fallback = current === 'm3u8' ? 'ts' : 'm3u8';
+        setAutoSwitchNotice('Tentando conexão alternativa com o canal...');
+        loadStream(currentStreamId, account || undefined, fallback);
+        return;
+      }
+      setAutoSwitchNotice(null);
+      setLoading(false);
+      playbackFailureTriggeredRef.current = false;
+      setErrorMessage('Erro no servidor ou canal indisponível.');
+      return;
+    }
+  };
+
+  const handleSwitchToVersion = (version: AlternativeMovieVersion) => {
+    setShowErrorVersionModal(false);
+    setErrorMessage(null);
+    triedIdsRef.current.add(version.stream_id);
+    setCurrentStreamId(version.stream_id);
+    setCurrentTitle(version.name);
+    fallbackAttemptedRef.current = false;
+    playbackFailureTriggeredRef.current = false;
+    currentFormatRef.current = version.container_extension || 'mp4';
+    loadStream(version.stream_id, account || undefined, version.container_extension || 'mp4');
+  };
+
+  // Automatic Fallback Engine:
+  // Se Filme falhar ou der timeout de 10s: aciona busca e troca automática de versões IPTV
+  // Se Live m3u8 falhar, auto-fallback para ts
+  // Se Série mp4 falhar, auto-fallback para mkv
+  const handleStreamErrorFallback = () => {
+    if (params.type === 'movie') {
+      handlePlaybackFailure();
+      return;
+    }
+
+    if (fallbackAttemptedRef.current) {
+      handlePlaybackFailure();
       return;
     }
     fallbackAttemptedRef.current = true;
@@ -392,7 +523,7 @@ export default function PlayerScreen() {
       const current = currentFormatRef.current;
       const fallback = current === 'm3u8' ? 'ts' : 'm3u8';
       loadStream(currentStreamId, account || undefined, fallback);
-    } else if (isVod) {
+    } else if (params.type === 'series') {
       const current = currentFormatRef.current;
       const fallback = current.toLowerCase() === 'mp4' ? 'mkv' : 'mp4';
       loadStream(currentStreamId, account || undefined, fallback);
@@ -596,12 +727,11 @@ export default function PlayerScreen() {
   };
 
   // Save Watch Progress for Movies & Series com o link que deu certo
-  useEffect(() => {
-    if (!isVod) return;
-
-    const saveCurrentProgress = () => {
-      if (player && player.currentTime > 5 && player.duration > 0) {
-        storage.saveWatchProgress({
+  const saveCurrentProgress = useCallback(async () => {
+    if (!isVod || !player) return;
+    try {
+      if (player.currentTime > 5 && player.duration > 0) {
+        await storage.saveWatchProgress({
           id: currentStreamId,
           title: currentTitle,
           poster: currentIcon || params.icon,
@@ -614,16 +744,43 @@ export default function PlayerScreen() {
           seriesTitle: params.seriesTitle || undefined,
           seasonNum: params.seasonNum ? Number(params.seasonNum) : undefined,
           episodeNum: params.episodeNum ? Number(params.episodeNum) : undefined,
-        });
+        }, account?.id);
       }
-    };
+    } catch (e) {}
+  }, [player, currentStreamId, currentTitle, isVod, streamUrl, params]);
 
+  useEffect(() => {
+    if (!isVod) return;
     const interval = setInterval(saveCurrentProgress, 5000);
     return () => {
       clearInterval(interval);
       saveCurrentProgress();
     };
-  }, [player, currentStreamId, currentTitle, isVod, streamUrl, params]);
+  }, [saveCurrentProgress, isVod]);
+
+  // Back button handler com diálogo de confirmação para salvar progresso
+  const handleBack = () => {
+    if (isVod) {
+      if (player) player.pause();
+      setShowExitConfirm(true);
+    } else {
+      if (player) player.pause();
+      router.back();
+    }
+  };
+
+  useEffect(() => {
+    const onBackPress = () => {
+      if (isVod) {
+        if (player) player.pause();
+        setShowExitConfirm(true);
+        return true;
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [isVod, player]);
 
   // Controls Visibility Auto-hide Timer
   const resetControlsTimer = () => {
@@ -842,7 +999,11 @@ export default function PlayerScreen() {
         <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>
-            {isVod ? 'Carregando vídeo...' : 'Conectando ao canal...'}
+            {autoSwitchNotice
+              ? autoSwitchNotice
+              : isVod
+              ? 'Carregando vídeo...'
+              : 'Conectando ao canal...'}
           </Text>
         </View>
       ) : null}
@@ -857,7 +1018,13 @@ export default function PlayerScreen() {
             <Pressable
               style={styles.errorRetryBtn}
               onPress={() => {
+                triedIdsRef.current = new Set([Number(params.id)]);
                 fallbackAttemptedRef.current = false;
+                playbackFailureTriggeredRef.current = false;
+                currentTimeRef.current = 0;
+                setAutoSwitchNotice(null);
+                setCurrentStreamId(Number(params.id));
+                setCurrentTitle(params.title || '');
                 initPlayer();
               }}
             >
@@ -902,10 +1069,7 @@ export default function PlayerScreen() {
               {/* Back Button */}
               <Pressable
                 style={styles.topIconBtn}
-                onPress={() => {
-                  if (player) player.pause();
-                  router.back();
-                }}
+                onPress={handleBack}
                 hitSlop={12}
               >
                 <Ionicons name="chevron-back" size={28} color="#fff" />
@@ -1149,6 +1313,21 @@ export default function PlayerScreen() {
                   }}
                   {...seekbarPanResponder.panHandlers}
                 >
+                  {/* Floating Time Tooltip when dragging */}
+                  {isScrubbing && (
+                    <View
+                      style={[
+                        styles.floatingTimeTooltip,
+                        { left: `${Math.max(2, Math.min(84, currentProgressPercent - 6))}%` },
+                      ]}
+                      pointerEvents="none"
+                    >
+                      <Text style={styles.floatingTimeTooltipText}>
+                        {formatTime(currentTime)}
+                      </Text>
+                    </View>
+                  )}
+
                   <View style={styles.seekbarBackgroundTrack}>
                     <View
                       style={[
@@ -1448,6 +1627,129 @@ export default function PlayerScreen() {
             />
           </View>
         </View>
+      </Modal>
+
+      {/* Modal de Confirmação de Saída com 'Continuar Assistindo' (VOD) */}
+      <Modal
+        visible={showExitConfirm}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowExitConfirm(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setShowExitConfirm(false)}>
+          <View style={styles.exitConfirmSheet}>
+            <Ionicons name="time" size={44} color="#00E5FF" />
+            <Text style={styles.exitConfirmTitle}>Deseja parar a reprodução?</Text>
+            <Text style={styles.exitConfirmSubtitle}>
+              Seu progresso será salvo para você continuar exatamente de onde parou.
+            </Text>
+
+            <View style={styles.exitTimeBadge}>
+              <Text style={styles.exitTimeBadgeText}>
+                Ponto salvo: {formatTime(currentTime)} de {formatTime(effectiveDuration)}
+              </Text>
+            </View>
+
+            <View style={styles.exitActionsRow}>
+              {/* Botão Branco Sólido de Alto Contraste: Continuar Assistindo */}
+              <Pressable
+                style={styles.exitBtnContinue}
+                onPress={() => {
+                  setShowExitConfirm(false);
+                  if (player) player.play();
+                }}
+              >
+                <Ionicons name="play" size={18} color="#000" />
+                <Text style={styles.exitBtnContinueText}>Continuar Assistindo</Text>
+              </Pressable>
+
+              {/* Botão Sair e Salvar */}
+              <Pressable
+                style={styles.exitBtnLeave}
+                onPress={async () => {
+                  setShowExitConfirm(false);
+                  if (player) player.pause();
+                  await saveCurrentProgress();
+                  router.back();
+                }}
+              >
+                <Ionicons name="exit-outline" size={18} color="#fff" />
+                <Text style={styles.exitBtnLeaveText}>Sair e Salvar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Modal de Detecção de Falha e Sugestão de Versão Alternativa (VOD) */}
+      <Modal
+        visible={showErrorVersionModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowErrorVersionModal(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setShowErrorVersionModal(false)}>
+          <View style={styles.exitConfirmSheet}>
+            <Ionicons
+              name={suggestedNextVersion ? 'sparkles' : 'alert-circle'}
+              size={44}
+              color={suggestedNextVersion ? '#00E5FF' : colors.warning}
+            />
+            <Text style={styles.exitConfirmTitle}>
+              {suggestedNextVersion
+                ? 'Versão Alternativa Encontrada!'
+                : isSearchingNextVersion
+                ? 'Buscando Outras Versões...'
+                : 'Conteúdo Indisponível'}
+            </Text>
+            <Text style={styles.exitConfirmSubtitle}>
+              {suggestedNextVersion
+                ? 'Esta transmissão não carregou no servidor IPTV. Encontramos outra versão deste mesmo título na sua lista:'
+                : isSearchingNextVersion
+                ? 'Aguarde enquanto verificamos se este mesmo filme está disponível em outras categorias...'
+                : 'Erro no servidor ou vídeo indisponível. Todas as versões disponíveis na lista IPTV falharam ao carregar.'}
+            </Text>
+
+            {isSearchingNextVersion ? (
+              <ActivityIndicator size="large" color="#00E5FF" style={{ marginVertical: 20 }} />
+            ) : suggestedNextVersion ? (
+              <View style={styles.errorVersionCard}>
+                <View style={styles.errorVersionHeader}>
+                  <Ionicons name="film" size={15} color="#00E5FF" />
+                  <Text style={styles.errorVersionCatText}>
+                    {suggestedNextVersion.category_name}
+                  </Text>
+                </View>
+                <Text style={styles.errorVersionTitle} numberOfLines={2}>
+                  {suggestedNextVersion.name}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.exitActionsRow}>
+              {suggestedNextVersion ? (
+                <Pressable
+                  style={styles.exitBtnContinue}
+                  onPress={() => handleSwitchToVersion(suggestedNextVersion)}
+                >
+                  <Ionicons name="play" size={18} color="#000" />
+                  <Text style={styles.exitBtnContinueText}>Tentar Próxima Versão</Text>
+                </Pressable>
+              ) : null}
+
+              <Pressable
+                style={styles.exitBtnLeave}
+                onPress={() => {
+                  setShowErrorVersionModal(false);
+                  router.back();
+                }}
+              >
+                <Ionicons name="arrow-back" size={18} color="#fff" />
+                <Text style={styles.exitBtnLeaveText}>Voltar ao Catálogo</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -2077,5 +2379,139 @@ const styles = StyleSheet.create({
   drawerItemNameActive: {
     color: colors.primary,
     fontWeight: '800',
+  },
+  /* Floating Time Tooltip when dragging */
+  floatingTimeTooltip: {
+    position: 'absolute',
+    top: -38,
+    backgroundColor: 'rgba(10, 15, 26, 0.95)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#00E5FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.6,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  floatingTimeTooltipText: {
+    color: '#00E5FF',
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  /* Exit Confirmation Modal Styles */
+  exitConfirmSheet: {
+    backgroundColor: '#0F121C',
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: '#1E2538',
+    padding: 24,
+    width: '90%',
+    maxWidth: 420,
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginTop: 'auto',
+    marginBottom: 'auto',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.8,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  exitConfirmTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  exitConfirmSubtitle: {
+    color: '#8E94A5',
+    fontSize: 13,
+    marginTop: 6,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  exitTimeBadge: {
+    backgroundColor: '#171D2D',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    marginTop: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#263048',
+  },
+  exitTimeBadgeText: {
+    color: '#00E5FF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  exitActionsRow: {
+    flexDirection: 'column',
+    width: '100%',
+    gap: 10,
+  },
+  exitBtnContinue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 14,
+    borderRadius: 14,
+    width: '100%',
+  },
+  exitBtnContinueText: {
+    color: '#000000',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  exitBtnLeave: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#1E2333',
+    paddingVertical: 13,
+    borderRadius: 14,
+    width: '100%',
+  },
+  exitBtnLeaveText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  /* Error & Version Suggestion Modal Styles */
+  errorVersionCard: {
+    backgroundColor: '#161C2C',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#00E5FF',
+    padding: 14,
+    width: '100%',
+    marginVertical: 16,
+  },
+  errorVersionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  errorVersionCatText: {
+    color: '#00E5FF',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  errorVersionTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

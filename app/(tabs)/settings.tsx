@@ -13,12 +13,14 @@ import {
   Dimensions,
   Linking,
   ActivityIndicator,
+  Platform,
+  StatusBar,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme/colors';
-import { storage, AppSettings, MediaListItem } from '../../src/services/storage';
+import { storage, AppSettings, MediaListItem, WatchProgressItem } from '../../src/services/storage';
 import { SavedAccount, LiveChannel, VodMovie, SeriesItem } from '../../src/types/iptv';
 import { XtreamClient } from '../../src/services/xtreamClient';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
@@ -40,13 +42,14 @@ export default function SettingsScreen() {
   const [favChannels, setFavChannels] = useState<LiveChannel[]>([]);
   const [favMovies, setFavMovies] = useState<VodMovie[]>([]);
   const [favSeries, setFavSeries] = useState<SeriesItem[]>([]);
+  const [continueWatching, setContinueWatching] = useState<WatchProgressItem[]>([]);
   const [myList, setMyList] = useState<MediaListItem[]>([]);
   const [watchLater, setWatchLater] = useState<MediaListItem[]>([]);
 
   // List Manager Modal State
   const [listManagerVisible, setListManagerVisible] = useState<boolean>(false);
-  const [listManagerTab, setListManagerTab] = useState<'favorites' | 'mylist' | 'watchlater'>('favorites');
-  const [favSubFilter, setFavSubFilter] = useState<'all' | 'live' | 'movie' | 'series'>('all');
+  const [listManagerTab, setListManagerTab] = useState<'favorites' | 'continue' | 'mylist' | 'watchlater'>('favorites');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'live' | 'movie' | 'series'>('all');
 
   // Parental PIN Modal State
   const [pinModalVisible, setPinModalVisible] = useState<boolean>(false);
@@ -104,18 +107,20 @@ export default function SettingsScreen() {
 
   const loadAllLists = async () => {
     try {
-      const [channels, movies, series, list, later] = await Promise.all([
+      const [channels, movies, series, list, later, progress] = await Promise.all([
         storage.getFavoriteChannels(),
         storage.getFavoriteMovies(),
         storage.getFavoriteSeries(),
         storage.getMyList(),
         storage.getWatchLater(),
+        storage.getAllWatchProgress(),
       ]);
       setFavChannels(channels);
       setFavMovies(movies);
       setFavSeries(series);
       setMyList(list);
       setWatchLater(later);
+      setContinueWatching(progress);
     } catch (e) {
       console.warn('Erro ao carregar listas no settings:', e);
     }
@@ -160,10 +165,15 @@ export default function SettingsScreen() {
     setSettings(s);
   };
 
-  const handleOpenListManager = (tab: 'favorites' | 'mylist' | 'watchlater') => {
+  const handleOpenListManager = (tab: 'favorites' | 'continue' | 'mylist' | 'watchlater') => {
     setListManagerTab(tab);
-    setFavSubFilter('all');
+    setCategoryFilter('all');
     setListManagerVisible(true);
+  };
+
+  const handleChangeTab = (tab: 'favorites' | 'continue' | 'mylist' | 'watchlater') => {
+    setListManagerTab(tab);
+    setCategoryFilter('all');
   };
 
   const handlePlayListItem = (item: {
@@ -172,6 +182,12 @@ export default function SettingsScreen() {
     title: string;
     poster?: string;
     extension?: string;
+    streamUrl?: string;
+    startPosition?: number | string;
+    seriesId?: string;
+    seriesTitle?: string;
+    seasonNum?: number | string;
+    episodeNum?: number | string;
   }) => {
     setListManagerVisible(false);
     if (item.type === 'live') {
@@ -182,15 +198,21 @@ export default function SettingsScreen() {
           autoFullscreen: '1',
         },
       });
-    } else if (item.type === 'movie') {
+    } else if (item.type === 'movie' || item.type === 'series') {
       router.push({
         pathname: '/player/[id]',
         params: {
           id: item.id,
-          type: 'movie',
+          type: item.type,
           title: item.title,
           extension: item.extension || 'mp4',
           icon: item.poster,
+          streamUrl: item.streamUrl,
+          startPosition: item.startPosition ? String(item.startPosition) : undefined,
+          seriesId: item.seriesId,
+          seriesTitle: item.seriesTitle,
+          seasonNum: item.seasonNum ? String(item.seasonNum) : undefined,
+          episodeNum: item.episodeNum ? String(item.episodeNum) : undefined,
         },
       });
     } else {
@@ -199,7 +221,7 @@ export default function SettingsScreen() {
   };
 
   const handleRemoveListItem = (
-    tab: 'favorites' | 'mylist' | 'watchlater',
+    tab: 'favorites' | 'continue' | 'mylist' | 'watchlater',
     item: { id: string | number; type: 'live' | 'movie' | 'series'; title: string }
   ) => {
     Alert.alert(
@@ -219,6 +241,8 @@ export default function SettingsScreen() {
               } else {
                 await storage.removeFavoriteSeries(Number(item.id));
               }
+            } else if (tab === 'continue') {
+              await storage.removeWatchProgress(item.id);
             } else if (tab === 'mylist') {
               await storage.removeFromMyList(item.id);
             } else if (tab === 'watchlater') {
@@ -231,6 +255,41 @@ export default function SettingsScreen() {
     );
   };
 
+  const totalFavoritesCount = favChannels.length + favMovies.length + favSeries.length;
+  const continueMoviesCount = continueWatching.filter((i) => i.type !== 'series').length;
+  const continueSeriesCount = continueWatching.filter((i) => i.type === 'series').length;
+  const myListMoviesCount = myList.filter((i) => i.type === 'movie').length;
+  const myListSeriesCount = myList.filter((i) => i.type === 'series').length;
+  const watchLaterMoviesCount = watchLater.filter((i) => i.type === 'movie').length;
+  const watchLaterSeriesCount = watchLater.filter((i) => i.type === 'series').length;
+
+  const currentTabTotalCount =
+    listManagerTab === 'favorites'
+      ? totalFavoritesCount
+      : listManagerTab === 'continue'
+      ? continueWatching.length
+      : listManagerTab === 'mylist'
+      ? myList.length
+      : watchLater.length;
+
+  const currentTabMoviesCount =
+    listManagerTab === 'favorites'
+      ? favMovies.length
+      : listManagerTab === 'continue'
+      ? continueMoviesCount
+      : listManagerTab === 'mylist'
+      ? myListMoviesCount
+      : watchLaterMoviesCount;
+
+  const currentTabSeriesCount =
+    listManagerTab === 'favorites'
+      ? favSeries.length
+      : listManagerTab === 'continue'
+      ? continueSeriesCount
+      : listManagerTab === 'mylist'
+      ? myListSeriesCount
+      : watchLaterSeriesCount;
+
   const getDisplayedItems = () => {
     if (listManagerTab === 'favorites') {
       let items: Array<{
@@ -240,9 +299,15 @@ export default function SettingsScreen() {
         type: 'live' | 'movie' | 'series';
         subtitle: string;
         extension?: string;
+        streamUrl?: string;
+        startPosition?: number | string;
+        seriesId?: string;
+        seriesTitle?: string;
+        seasonNum?: number | string;
+        episodeNum?: number | string;
       }> = [];
 
-      if (favSubFilter === 'all' || favSubFilter === 'live') {
+      if (categoryFilter === 'all' || categoryFilter === 'live') {
         items = items.concat(
           favChannels.map((c) => ({
             id: c.stream_id,
@@ -253,7 +318,7 @@ export default function SettingsScreen() {
           }))
         );
       }
-      if (favSubFilter === 'all' || favSubFilter === 'movie') {
+      if (categoryFilter === 'all' || categoryFilter === 'movie') {
         items = items.concat(
           favMovies.map((m) => ({
             id: m.stream_id,
@@ -265,7 +330,7 @@ export default function SettingsScreen() {
           }))
         );
       }
-      if (favSubFilter === 'all' || favSubFilter === 'series') {
+      if (categoryFilter === 'all' || categoryFilter === 'series') {
         items = items.concat(
           favSeries.map((s) => ({
             id: s.series_id,
@@ -279,8 +344,43 @@ export default function SettingsScreen() {
       return items;
     }
 
+    if (listManagerTab === 'continue') {
+      let items = continueWatching;
+      if (categoryFilter === 'movie') {
+        items = items.filter((i) => i.type !== 'series');
+      } else if (categoryFilter === 'series') {
+        items = items.filter((i) => i.type === 'series');
+      }
+      return items.map((i) => {
+        const pct = i.durationSec > 0 ? Math.round((i.positionSec / i.durationSec) * 100) : 0;
+        const posMin = Math.floor(i.positionSec / 60);
+        const durMin = Math.floor(i.durationSec / 60);
+        const timeText = durMin > 0 ? `${posMin} min de ${durMin} min (${pct}%)` : `${posMin} min assistidos`;
+        return {
+          id: i.id,
+          title: i.title,
+          poster: i.poster,
+          type: (i.type === 'live' ? 'live' : i.type === 'series' ? 'series' : 'movie') as 'live' | 'movie' | 'series',
+          subtitle: `${i.type === 'series' ? 'Série' : 'Filme'} • ${timeText}`,
+          extension: i.extension,
+          streamUrl: i.streamUrl,
+          startPosition: i.positionSec,
+          seriesId: i.seriesId ? String(i.seriesId) : undefined,
+          seriesTitle: i.seriesTitle,
+          seasonNum: i.seasonNum,
+          episodeNum: i.episodeNum,
+        };
+      });
+    }
+
     if (listManagerTab === 'mylist') {
-      return myList.map((i) => ({
+      let items = myList;
+      if (categoryFilter === 'movie') {
+        items = items.filter((i) => i.type === 'movie');
+      } else if (categoryFilter === 'series') {
+        items = items.filter((i) => i.type === 'series');
+      }
+      return items.map((i) => ({
         id: i.id,
         title: i.title,
         poster: i.poster,
@@ -290,7 +390,13 @@ export default function SettingsScreen() {
       }));
     }
 
-    return watchLater.map((i) => ({
+    let items = watchLater;
+    if (categoryFilter === 'movie') {
+      items = items.filter((i) => i.type === 'movie');
+    } else if (categoryFilter === 'series') {
+      items = items.filter((i) => i.type === 'series');
+    }
+    return items.map((i) => ({
       id: i.id,
       title: i.title,
       poster: i.poster,
@@ -300,7 +406,27 @@ export default function SettingsScreen() {
     }));
   };
 
-  const totalFavoritesCount = favChannels.length + favMovies.length + favSeries.length;
+  const getEmptyMessage = () => {
+    if (categoryFilter !== 'all') {
+      const typeLabel =
+        categoryFilter === 'live'
+          ? 'de TV ao vivo'
+          : categoryFilter === 'movie'
+          ? 'de filme'
+          : 'de série';
+      return `Nenhum item ${typeLabel} encontrado nesta categoria.`;
+    }
+    if (listManagerTab === 'favorites') {
+      return 'Você ainda não favoritou canais, filmes ou séries.';
+    }
+    if (listManagerTab === 'continue') {
+      return 'Nenhum vídeo em andamento no histórico de reprodução.';
+    }
+    if (listManagerTab === 'mylist') {
+      return 'Sua lista está vazia. Adicione filmes ou séries para acompanhar.';
+    }
+    return 'Nenhum título foi marcado para assistir depois.';
+  };
 
   const handleToggleStreamFormat = async () => {
     if (!settings) return;
@@ -378,8 +504,9 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Brand Header */}
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        {/* Brand Header */}
       <View style={styles.brandHeader}>
         <Image
           source={require('../../assets/icon.png')}
@@ -431,68 +558,90 @@ export default function SettingsScreen() {
       <Text style={styles.sectionTitle}>Minhas Listas & Coleções</Text>
       <View style={styles.card}>
         {/* Meus Favoritos */}
-        <FocusableItem
-          style={styles.settingRow}
+        <Pressable
+          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
           onPress={() => handleOpenListManager('favorites')}
         >
           <View style={styles.settingIcon}>
             <Ionicons name="star" size={20} color="#FFD700" />
           </View>
           <View style={styles.settingDetails}>
-            <Text style={styles.settingTitle}>Meus Favoritos</Text>
-            <Text style={styles.settingSub}>
-              {totalFavoritesCount} itens salvos (Canais, Filmes e Séries)
+            <Text style={styles.settingTitle} numberOfLines={1}>Meus Favoritos</Text>
+            <Text style={styles.settingSub} numberOfLines={1}>
+              Canais, filmes e séries favoritos
             </Text>
           </View>
           <View style={styles.badgeCount}>
             <Text style={styles.badgeCountText}>{totalFavoritesCount}</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </FocusableItem>
+        </Pressable>
+
+        <View style={styles.divider} />
+
+        {/* Continuar Assistindo */}
+        <Pressable
+          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
+          onPress={() => handleOpenListManager('continue')}
+        >
+          <View style={styles.settingIcon}>
+            <Ionicons name="play-forward-circle" size={20} color="#00E5FF" />
+          </View>
+          <View style={styles.settingDetails}>
+            <Text style={styles.settingTitle} numberOfLines={1}>Continuar Assistindo</Text>
+            <Text style={styles.settingSub} numberOfLines={1}>
+              Vídeos em andamento no histórico
+            </Text>
+          </View>
+          <View style={styles.badgeCount}>
+            <Text style={styles.badgeCountText}>{continueWatching.length}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </Pressable>
 
         <View style={styles.divider} />
 
         {/* Minha Lista */}
-        <FocusableItem
-          style={styles.settingRow}
+        <Pressable
+          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
           onPress={() => handleOpenListManager('mylist')}
         >
           <View style={styles.settingIcon}>
             <Ionicons name="bookmark" size={20} color={colors.primary} />
           </View>
           <View style={styles.settingDetails}>
-            <Text style={styles.settingTitle}>Minha Lista</Text>
-            <Text style={styles.settingSub}>
-              {myList.length} títulos adicionados
+            <Text style={styles.settingTitle} numberOfLines={1}>Minha Lista</Text>
+            <Text style={styles.settingSub} numberOfLines={1}>
+              Títulos salvos na sua lista
             </Text>
           </View>
           <View style={styles.badgeCount}>
             <Text style={styles.badgeCountText}>{myList.length}</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </FocusableItem>
+        </Pressable>
 
         <View style={styles.divider} />
 
         {/* Assistir Depois */}
-        <FocusableItem
-          style={styles.settingRow}
+        <Pressable
+          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
           onPress={() => handleOpenListManager('watchlater')}
         >
           <View style={styles.settingIcon}>
             <Ionicons name="time" size={20} color={colors.primary} />
           </View>
           <View style={styles.settingDetails}>
-            <Text style={styles.settingTitle}>Assistir Depois</Text>
-            <Text style={styles.settingSub}>
-              {watchLater.length} títulos salvos para mais tarde
+            <Text style={styles.settingTitle} numberOfLines={1}>Assistir Depois</Text>
+            <Text style={styles.settingSub} numberOfLines={1}>
+              Títulos para assistir mais tarde
             </Text>
           </View>
           <View style={styles.badgeCount}>
             <Text style={styles.badgeCountText}>{watchLater.length}</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </FocusableItem>
+        </Pressable>
       </View>
 
       {/* Stream & Player Settings */}
@@ -673,6 +822,7 @@ export default function SettingsScreen() {
           <Ionicons name="open-outline" size={14} color="#F5A623" style={{ marginLeft: 4 }} />
         </Pressable>
       </View>
+      </ScrollView>
 
       {/* Modal: Alterar PIN de Controle Parental */}
       <Modal
@@ -843,6 +993,8 @@ export default function SettingsScreen() {
                 name={
                   listManagerTab === 'favorites'
                     ? 'star'
+                    : listManagerTab === 'continue'
+                    ? 'play-forward-circle'
                     : listManagerTab === 'mylist'
                     ? 'bookmark'
                     : 'time'
@@ -851,6 +1003,8 @@ export default function SettingsScreen() {
                 color={
                   listManagerTab === 'favorites'
                     ? '#FFD700'
+                    : listManagerTab === 'continue'
+                    ? '#00E5FF'
                     : listManagerTab === 'mylist'
                     ? colors.primary
                     : colors.secondary
@@ -859,6 +1013,8 @@ export default function SettingsScreen() {
               <Text style={styles.managerHeaderTitle}>
                 {listManagerTab === 'favorites'
                   ? 'Meus Favoritos'
+                  : listManagerTab === 'continue'
+                  ? 'Continuar Assistindo'
                   : listManagerTab === 'mylist'
                   ? 'Minha Lista'
                   : 'Assistir Depois'}
@@ -873,13 +1029,18 @@ export default function SettingsScreen() {
           </View>
 
           {/* Top Tabs */}
-          <View style={styles.managerTabsRow}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.managerTabsScroll}
+            contentContainerStyle={styles.managerTabsRow}
+          >
             <Pressable
               style={[
                 styles.managerTabItem,
                 listManagerTab === 'favorites' && styles.managerTabItemActive,
               ]}
-              onPress={() => setListManagerTab('favorites')}
+              onPress={() => handleChangeTab('favorites')}
             >
               <Ionicons
                 name="star"
@@ -899,9 +1060,31 @@ export default function SettingsScreen() {
             <Pressable
               style={[
                 styles.managerTabItem,
+                listManagerTab === 'continue' && styles.managerTabItemActive,
+              ]}
+              onPress={() => handleChangeTab('continue')}
+            >
+              <Ionicons
+                name="play-forward"
+                size={14}
+                color={listManagerTab === 'continue' ? '#00E5FF' : '#888'}
+              />
+              <Text
+                style={[
+                  styles.managerTabText,
+                  listManagerTab === 'continue' && styles.managerTabTextActive,
+                ]}
+              >
+                Continuar ({continueWatching.length})
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={[
+                styles.managerTabItem,
                 listManagerTab === 'mylist' && styles.managerTabItemActive,
               ]}
-              onPress={() => setListManagerTab('mylist')}
+              onPress={() => handleChangeTab('mylist')}
             >
               <Ionicons
                 name="bookmark"
@@ -923,7 +1106,7 @@ export default function SettingsScreen() {
                 styles.managerTabItem,
                 listManagerTab === 'watchlater' && styles.managerTabItemActive,
               ]}
-              onPress={() => setListManagerTab('watchlater')}
+              onPress={() => handleChangeTab('watchlater')}
             >
               <Ionicons
                 name="time"
@@ -939,80 +1122,85 @@ export default function SettingsScreen() {
                 Depois ({watchLater.length})
               </Text>
             </Pressable>
-          </View>
+          </ScrollView>
 
-          {/* Subfilter para Favoritos */}
-          {listManagerTab === 'favorites' ? (
-            <View style={styles.subFilterRow}>
+          {/* Subfilter de Categorias - Sempre visível em todas as abas */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.subFilterScroll}
+            contentContainerStyle={styles.subFilterRow}
+          >
+            <Pressable
+              style={[
+                styles.subFilterChip,
+                categoryFilter === 'all' && styles.subFilterChipActive,
+              ]}
+              onPress={() => setCategoryFilter('all')}
+            >
+              <Text
+                style={[
+                  styles.subFilterText,
+                  categoryFilter === 'all' && styles.subFilterTextActive,
+                ]}
+              >
+                Todos ({currentTabTotalCount})
+              </Text>
+            </Pressable>
+
+            {listManagerTab === 'favorites' ? (
               <Pressable
                 style={[
                   styles.subFilterChip,
-                  favSubFilter === 'all' && styles.subFilterChipActive,
+                  categoryFilter === 'live' && styles.subFilterChipActive,
                 ]}
-                onPress={() => setFavSubFilter('all')}
+                onPress={() => setCategoryFilter('live')}
               >
                 <Text
                   style={[
                     styles.subFilterText,
-                    favSubFilter === 'all' && styles.subFilterTextActive,
-                  ]}
-                >
-                  Todos ({totalFavoritesCount})
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.subFilterChip,
-                  favSubFilter === 'live' && styles.subFilterChipActive,
-                ]}
-                onPress={() => setFavSubFilter('live')}
-              >
-                <Text
-                  style={[
-                    styles.subFilterText,
-                    favSubFilter === 'live' && styles.subFilterTextActive,
+                    categoryFilter === 'live' && styles.subFilterTextActive,
                   ]}
                 >
                   Ao Vivo ({favChannels.length})
                 </Text>
               </Pressable>
+            ) : null}
 
-              <Pressable
+            <Pressable
+              style={[
+                styles.subFilterChip,
+                categoryFilter === 'movie' && styles.subFilterChipActive,
+              ]}
+              onPress={() => setCategoryFilter('movie')}
+            >
+              <Text
                 style={[
-                  styles.subFilterChip,
-                  favSubFilter === 'movie' && styles.subFilterChipActive,
+                  styles.subFilterText,
+                  categoryFilter === 'movie' && styles.subFilterTextActive,
                 ]}
-                onPress={() => setFavSubFilter('movie')}
               >
-                <Text
-                  style={[
-                    styles.subFilterText,
-                    favSubFilter === 'movie' && styles.subFilterTextActive,
-                  ]}
-                >
-                  Filmes ({favMovies.length})
-                </Text>
-              </Pressable>
+                Filmes ({currentTabMoviesCount})
+              </Text>
+            </Pressable>
 
-              <Pressable
+            <Pressable
+              style={[
+                styles.subFilterChip,
+                categoryFilter === 'series' && styles.subFilterChipActive,
+              ]}
+              onPress={() => setCategoryFilter('series')}
+            >
+              <Text
                 style={[
-                  styles.subFilterChip,
-                  favSubFilter === 'series' && styles.subFilterChipActive,
+                  styles.subFilterText,
+                  categoryFilter === 'series' && styles.subFilterTextActive,
                 ]}
-                onPress={() => setFavSubFilter('series')}
               >
-                <Text
-                  style={[
-                    styles.subFilterText,
-                    favSubFilter === 'series' && styles.subFilterTextActive,
-                  ]}
-                >
-                  Séries ({favSeries.length})
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
+                Séries ({currentTabSeriesCount})
+              </Text>
+            </Pressable>
+          </ScrollView>
 
           {/* List of Items */}
           {getDisplayedItems().length === 0 ? (
@@ -1021,6 +1209,8 @@ export default function SettingsScreen() {
                 name={
                   listManagerTab === 'favorites'
                     ? 'star-outline'
+                    : listManagerTab === 'continue'
+                    ? 'play-forward-circle-outline'
                     : listManagerTab === 'mylist'
                     ? 'bookmark-outline'
                     : 'time-outline'
@@ -1028,17 +1218,12 @@ export default function SettingsScreen() {
                 size={54}
                 color="#444"
               />
-              <Text style={styles.managerEmptyTitle}>Nenhum item salvo</Text>
-              <Text style={styles.managerEmptyDesc}>
-                {listManagerTab === 'favorites'
-                  ? 'Você ainda não favoritou canais, filmes ou séries.'
-                  : listManagerTab === 'mylist'
-                  ? 'Sua lista está vazia. Adicione filmes ou séries para acompanhar.'
-                  : 'Nenhum título foi marcado para assistir depois.'}
-              </Text>
+              <Text style={styles.managerEmptyTitle}>Nenhum item encontrado</Text>
+              <Text style={styles.managerEmptyDesc}>{getEmptyMessage()}</Text>
             </View>
           ) : (
             <FlatList
+              style={styles.managerFlatList}
               data={getDisplayedItems()}
               keyExtractor={(item) => `${item.type}_${item.id}`}
               contentContainerStyle={styles.managerListContent}
@@ -1114,7 +1299,7 @@ export default function SettingsScreen() {
           )}
         </View>
       </Modal>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -1251,8 +1436,9 @@ const styles = StyleSheet.create({
   settingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    gap: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 2,
+    width: '100%',
   },
   settingIcon: {
     width: 36,
@@ -1261,9 +1447,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 12,
   },
   settingDetails: {
     flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+    marginRight: 8,
   },
   settingTitle: {
     fontSize: 14,
@@ -1421,6 +1611,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#303042',
     marginRight: 6,
+    flexShrink: 0,
   },
   badgeCountText: {
     color: '#F5A623',
@@ -1432,14 +1623,14 @@ const styles = StyleSheet.create({
   managerModalContainer: {
     flex: 1,
     backgroundColor: '#0d0d12',
-    paddingTop: 16,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 16,
   },
   managerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#1e1e28',
   },
@@ -1458,19 +1649,24 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#1b1b24',
   },
+  managerTabsScroll: {
+    flexGrow: 0,
+    marginTop: 4,
+    marginBottom: 2,
+  },
   managerTabsRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 8,
     gap: 8,
+    alignItems: 'center',
   },
   managerTabItem: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
     borderRadius: 12,
     backgroundColor: '#16161f',
     borderWidth: 1,
@@ -1491,16 +1687,21 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  /* Sub Filter */
+  /* Sub Filter Scroll & Row */
+  subFilterScroll: {
+    flexGrow: 0,
+    marginBottom: 8,
+  },
   subFilterRow: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingVertical: 4,
     gap: 8,
+    alignItems: 'center',
   },
   subFilterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: 16,
     backgroundColor: '#161620',
     borderWidth: 1,
@@ -1512,7 +1713,7 @@ const styles = StyleSheet.create({
   },
   subFilterText: {
     color: '#777',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
   },
   subFilterTextActive: {
@@ -1521,8 +1722,13 @@ const styles = StyleSheet.create({
   },
 
   /* List & Cards */
+  managerFlatList: {
+    flex: 1,
+    width: '100%',
+  },
   managerListContent: {
     padding: 16,
+    paddingBottom: 40,
     gap: 12,
   },
   managerItemCard: {
@@ -1534,6 +1740,7 @@ const styles = StyleSheet.create({
     borderColor: '#222230',
     padding: 10,
     gap: 12,
+    width: '100%',
   },
   managerItemPosterBox: {
     width: 60,
@@ -1544,6 +1751,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
+    flexShrink: 0,
   },
   managerItemPoster: {
     width: '100%',
@@ -1565,6 +1773,7 @@ const styles = StyleSheet.create({
   },
   managerItemInfo: {
     flex: 1,
+    minWidth: 0,
     justifyContent: 'center',
   },
   managerItemTitle: {
@@ -1582,6 +1791,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexShrink: 0,
   },
   managerPlayBtn: {
     width: 36,

@@ -22,6 +22,7 @@ import { IptvCategory, VodMovie, SavedAccount } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
 import { isAdultCategory } from '../../src/services/parentalControl';
 import { EnrichedPosterImage } from '../../src/components/common/EnrichedPosterImage';
+import { findAlternativeMovieVersions, AlternativeMovieVersion } from '../../src/services/iptvVersions';
 
 export default function MoviesScreen() {
   const router = useRouter();
@@ -33,6 +34,7 @@ export default function MoviesScreen() {
     brand?: string;
     brandName?: string;
     categoryId?: string;
+    categoryName?: string;
     movieId?: string;
   }>();
   const [categories, setCategories] = useState<IptvCategory[]>([]);
@@ -64,6 +66,10 @@ export default function MoviesScreen() {
   const [isMovieInList, setIsMovieInList] = useState<boolean>(false);
   const [isMovieWatchLater, setIsMovieWatchLater] = useState<boolean>(false);
   const [isMoviePlotExpanded, setIsMoviePlotExpanded] = useState<boolean>(false);
+  const [movieVersions, setMovieVersions] = useState<AlternativeMovieVersion[]>([]);
+  const [isLoadingVersions, setIsLoadingVersions] = useState<boolean>(false);
+  const [detailsTab, setDetailsTab] = useState<'info' | 'versions'>('info');
+  const [sortBy, setSortBy] = useState<'default' | 'az' | 'za'>('default');
 
   // Parental PIN para Filmes Adultos (Sempre solicita PIN)
   const [targetAdultMovie, setTargetAdultMovie] = useState<VodMovie | null>(null);
@@ -73,7 +79,7 @@ export default function MoviesScreen() {
 
   useEffect(() => {
     initMovies();
-  }, [params.brand]);
+  }, [params.brand, params.categoryId]);
 
   useEffect(() => {
     if (params.movieId && account) {
@@ -127,6 +133,19 @@ export default function MoviesScreen() {
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
       const cats = await client.getVodCategories();
       setCategories(cats || []);
+
+      if (params.categoryId) {
+        const catId = String(params.categoryId);
+        const matchingCat = cats?.find((c) => String(c.category_id) === catId);
+        const catName = matchingCat ? matchingCat.category_name : (params.categoryName || 'Categoria');
+        setSelectedCategory(catId);
+        setSelectedCategoryName(catName);
+        setSelectedBrandName(null);
+        const vods = await client.getVodStreams(catId);
+        setMovies(vods || []);
+        if (vods && vods.length > 0) setHeroMovie(pickRandomMovie(vods));
+        return;
+      }
 
       if (params.brand) {
         const brandKey = params.brand.toLowerCase();
@@ -269,24 +288,34 @@ export default function MoviesScreen() {
   const openMovieDetails = async (movie: VodMovie) => {
     setSelectedMovie(movie);
     setMovieDetails(null);
+    setMovieVersions([]);
     setIsMoviePlotExpanded(false);
     setLoadingMovieDetails(true);
+    setIsLoadingVersions(true);
+    setDetailsTab('info');
 
     try {
-      const inList = await storage.isInMyList(movie.stream_id);
+      const [inList, inWatchLater] = await Promise.all([
+        storage.isInMyList(movie.stream_id).catch(() => false),
+        storage.isInWatchLater(movie.stream_id).catch(() => false),
+      ]);
       setIsMovieInList(inList);
-      const inWatchLater = await storage.isInWatchLater(movie.stream_id);
       setIsMovieWatchLater(inWatchLater);
 
       if (account) {
         const client = new XtreamClient(account.serverUrl, account.username, account.password);
-        const info = await client.getVodInfo(movie.stream_id);
+        const [info, versions] = await Promise.all([
+          client.getVodInfo(movie.stream_id).catch(() => null),
+          findAlternativeMovieVersions(movie.name, movie.stream_id, movie.category_id).catch(() => []),
+        ]);
         setMovieDetails(info);
+        setMovieVersions(versions);
       }
     } catch (e) {
       console.warn('Erro ao carregar detalhes do filme:', e);
     } finally {
       setLoadingMovieDetails(false);
+      setIsLoadingVersions(false);
     }
   };
 
@@ -372,9 +401,17 @@ export default function MoviesScreen() {
     handleMovieClick(item);
   };
 
-  const filteredMovies = movies.filter((m) =>
-    (m.name || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredMovies = React.useMemo(() => {
+    let list = movies.filter((m) =>
+      (m.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    if (sortBy === 'az') {
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    } else if (sortBy === 'za') {
+      list.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+    }
+    return list;
+  }, [movies, searchQuery, sortBy]);
 
   const heroRating = heroMovie?.rating ? String(heroMovie.rating).trim() : '8.5';
 
@@ -656,6 +693,35 @@ export default function MoviesScreen() {
                 <Text style={styles.sectionCountText}>{filteredMovies.length}</Text>
               </View>
             </View>
+
+            {/* Pílulas de Ordenação Rápida: Padrão, A-Z, Z-A */}
+            <View style={styles.sortPillsRow}>
+              <Pressable
+                style={[styles.sortPill, sortBy === 'default' && styles.sortPillActive]}
+                onPress={() => setSortBy('default')}
+              >
+                <Text style={[styles.sortPillText, sortBy === 'default' && styles.sortPillTextActive]}>
+                  Padrão
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.sortPill, sortBy === 'az' && styles.sortPillActive]}
+                onPress={() => setSortBy('az')}
+              >
+                <Text style={[styles.sortPillText, sortBy === 'az' && styles.sortPillTextActive]}>
+                  A-Z
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.sortPill, sortBy === 'za' && styles.sortPillActive]}
+                onPress={() => setSortBy('za')}
+              >
+                <Text style={[styles.sortPillText, sortBy === 'za' && styles.sortPillTextActive]}>
+                  Z-A
+                </Text>
+              </Pressable>
+            </View>
+
             <Pressable
               style={styles.seeAllBtn}
               onPress={() => {
@@ -943,6 +1009,78 @@ export default function MoviesScreen() {
                       : 'Favoritar'}
                   </Text>
                 </Pressable>
+              </View>
+
+              {/* Seção: Versões Alternativas na sua Lista IPTV */}
+              <View style={styles.versionsSection}>
+                <View style={styles.versionsHeaderRow}>
+                  <Ionicons name="copy-outline" size={18} color="#00E5FF" />
+                  <Text style={styles.versionsTitle}>
+                    Outras Versões Disponíveis ({movieVersions.length})
+                  </Text>
+                </View>
+
+                <Text style={styles.versionsNotice}>
+                  💡 O mesmo título em outras categorias da sua lista IPTV. Se uma não carregar ou falhar, toque para tentar outra versão:
+                </Text>
+
+                {/* Versão Atual */}
+                <View style={[styles.versionCard, styles.versionCardCurrent]}>
+                  <View style={styles.versionCardInfo}>
+                    <Text style={styles.versionCardTitle} numberOfLines={1}>
+                      {selectedMovie?.name}
+                    </Text>
+                    <Text style={styles.versionCardCategory}>
+                      {selectedCategoryName || 'Categoria Atual'} • {selectedMovie?.container_extension?.toUpperCase() || 'MP4'}
+                    </Text>
+                  </View>
+                  <View style={styles.currentBadge}>
+                    <Text style={styles.currentBadgeText}>VOCÊ ESTÁ AQUI</Text>
+                  </View>
+                </View>
+
+                {/* Outras Versões Encontradas */}
+                {isLoadingVersions ? (
+                  <View style={styles.loadingVersionsBox}>
+                    <ActivityIndicator size="small" color="#00E5FF" />
+                    <Text style={styles.loadingVersionsText}>Buscando versões em outras categorias...</Text>
+                  </View>
+                ) : movieVersions.length > 0 ? (
+                  movieVersions.map((v) => (
+                    <Pressable
+                      key={v.stream_id}
+                      style={styles.versionCard}
+                      onPress={() => {
+                        const altMovie: VodMovie = {
+                          num: 0,
+                          name: v.name,
+                          stream_id: v.stream_id,
+                          category_id: v.category_id,
+                          container_extension: v.container_extension || 'mp4',
+                          stream_icon: v.stream_icon || selectedMovie?.stream_icon,
+                        };
+                        handleWatchMovie(altMovie);
+                      }}
+                    >
+                      <View style={styles.versionCardInfo}>
+                        <Text style={styles.versionCardTitle} numberOfLines={1}>
+                          {v.name}
+                        </Text>
+                        <Text style={styles.versionCardCategory}>
+                          {v.category_name} • {v.container_extension?.toUpperCase() || 'MP4'}
+                        </Text>
+                      </View>
+                      <View style={styles.playVersionBtn}>
+                        <Ionicons name="play" size={13} color="#000" />
+                        <Text style={styles.playVersionBtnText}>Assistir</Text>
+                      </View>
+                    </Pressable>
+                  ))
+                ) : (
+                  <Text style={styles.noOtherVersionsText}>
+                    Nenhuma outra versão deste filme encontrada em outras categorias.
+                  </Text>
+                )}
               </View>
 
               {/* Seção: Você também pode gostar (Recomendados da mesma categoria) */}
@@ -1815,5 +1953,129 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 14,
     fontWeight: '800',
+  },
+  /* Sort Pills Styles */
+  sortPillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  sortPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: '#161922',
+    borderWidth: 1,
+    borderColor: '#262A36',
+  },
+  sortPillActive: {
+    backgroundColor: '#00E5FF',
+    borderColor: '#00E5FF',
+  },
+  sortPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8E94A5',
+  },
+  sortPillTextActive: {
+    color: '#000',
+    fontWeight: '800',
+  },
+  /* Versions Section Styles */
+  versionsSection: {
+    marginTop: 20,
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  versionsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  versionsTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+  versionsNotice: {
+    fontSize: 12,
+    color: '#8E94A5',
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  versionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#12151D',
+    borderWidth: 1,
+    borderColor: '#222838',
+    marginBottom: 10,
+  },
+  versionCardCurrent: {
+    borderColor: '#00E5FF',
+    backgroundColor: 'rgba(0, 229, 255, 0.05)',
+  },
+  versionCardInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
+  versionCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 3,
+  },
+  versionCardCategory: {
+    fontSize: 12,
+    color: '#00E5FF',
+  },
+  currentBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 229, 255, 0.2)',
+    borderWidth: 1,
+    borderColor: '#00E5FF',
+  },
+  currentBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#00E5FF',
+    letterSpacing: 0.5,
+  },
+  playVersionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: '#00E5FF',
+  },
+  playVersionBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#000',
+  },
+  loadingVersionsBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  loadingVersionsText: {
+    fontSize: 12,
+    color: '#8E94A5',
+  },
+  noOtherVersionsText: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    paddingVertical: 4,
   },
 });

@@ -29,7 +29,13 @@ export default function SeriesScreen() {
   const isLandscape = width > height;
   const numGridColumns = isLandscape ? 5 : 3;
   const gridCardWidth = (width - 32 - (numGridColumns - 1) * 12) / numGridColumns;
-  const params = useLocalSearchParams<{ brand?: string; brandName?: string; seriesId?: string }>();
+  const params = useLocalSearchParams<{
+    brand?: string;
+    brandName?: string;
+    categoryId?: string;
+    categoryName?: string;
+    seriesId?: string;
+  }>();
   const [categories, setCategories] = useState<IptvCategory[]>([]);
   const [seriesList, setSeriesList] = useState<SeriesItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('for_you');
@@ -42,6 +48,7 @@ export default function SeriesScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [account, setAccount] = useState<SavedAccount | null>(null);
   const [seriesFavorites, setSeriesFavorites] = useState<number[]>([]);
+  const [sortBy, setSortBy] = useState<'default' | 'az' | 'za'>('default');
 
   // Hero Item
   const [heroSeries, setHeroSeries] = useState<SeriesItem | null>(null);
@@ -70,7 +77,7 @@ export default function SeriesScreen() {
 
   useEffect(() => {
     initSeries();
-  }, [params.brand]);
+  }, [params.brand, params.categoryId]);
 
   useEffect(() => {
     if (params.seriesId && account) {
@@ -126,6 +133,19 @@ export default function SeriesScreen() {
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
       const cats = await client.getSeriesCategories();
       setCategories(cats || []);
+
+      if (params.categoryId) {
+        const catId = String(params.categoryId);
+        const matchingCat = cats?.find((c) => String(c.category_id) === catId);
+        const catName = matchingCat ? matchingCat.category_name : (params.categoryName || 'Categoria');
+        setSelectedCategory(catId);
+        setSelectedCategoryName(catName);
+        setSelectedBrandName(null);
+        const s = await client.getSeries(catId);
+        setSeriesList(s || []);
+        if (s && s.length > 0) setHeroSeries(pickRandomSeries(s));
+        return;
+      }
 
       if (params.brand) {
         const brandKey = params.brand.toLowerCase();
@@ -438,9 +458,17 @@ export default function SeriesScreen() {
     setIsSeriesWatchLater(inWatchLater);
   };
 
-  const filteredSeries = seriesList.filter((s) =>
-    (s.name || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredSeries = React.useMemo(() => {
+    let list = seriesList.filter((s) =>
+      (s.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+    );
+    if (sortBy === 'az') {
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    } else if (sortBy === 'za') {
+      list.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
+    }
+    return list;
+  }, [seriesList, searchQuery, sortBy]);
 
   const heroRating = heroSeries?.rating ? String(heroSeries.rating).trim() : '8.0';
 
@@ -730,6 +758,35 @@ export default function SeriesScreen() {
                 <Text style={styles.sectionCountText}>{filteredSeries.length}</Text>
               </View>
             </View>
+
+            {/* Pílulas de Ordenação Rápida: Padrão, A-Z, Z-A */}
+            <View style={styles.sortPillsRow}>
+              <Pressable
+                style={[styles.sortPill, sortBy === 'default' && styles.sortPillActive]}
+                onPress={() => setSortBy('default')}
+              >
+                <Text style={[styles.sortPillText, sortBy === 'default' && styles.sortPillTextActive]}>
+                  Padrão
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.sortPill, sortBy === 'az' && styles.sortPillActive]}
+                onPress={() => setSortBy('az')}
+              >
+                <Text style={[styles.sortPillText, sortBy === 'az' && styles.sortPillTextActive]}>
+                  A-Z
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[styles.sortPill, sortBy === 'za' && styles.sortPillActive]}
+                onPress={() => setSortBy('za')}
+              >
+                <Text style={[styles.sortPillText, sortBy === 'za' && styles.sortPillTextActive]}>
+                  Z-A
+                </Text>
+              </Pressable>
+            </View>
+
             <Pressable
               style={styles.seeAllBtn}
               onPress={() => {
@@ -2108,6 +2165,33 @@ const styles = StyleSheet.create({
   pinConfirmBtnText: {
     color: '#000',
     fontSize: 14,
+    fontWeight: '800',
+  },
+  /* Sort Pills Styles */
+  sortPillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  sortPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: '#161922',
+    borderWidth: 1,
+    borderColor: '#262A36',
+  },
+  sortPillActive: {
+    backgroundColor: '#00E5FF',
+    borderColor: '#00E5FF',
+  },
+  sortPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8E94A5',
+  },
+  sortPillTextActive: {
+    color: '#000',
     fontWeight: '800',
   },
 });

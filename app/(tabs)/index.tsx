@@ -11,6 +11,7 @@ import {
   Modal,
   RefreshControl,
   Platform,
+  Alert,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,9 +21,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme/colors';
 import { storage, WatchProgressItem, MediaListItem } from '../../src/services/storage';
 import { XtreamClient } from '../../src/services/xtreamClient';
-import { SavedAccount, LiveChannel, VodMovie } from '../../src/types/iptv';
+import { SavedAccount, LiveChannel, VodMovie, IptvCategory } from '../../src/types/iptv';
 import { FocusableItem } from '../../src/components/common/FocusableItem';
-import { StreamingBrandsRow, StreamingBrand } from '../../src/components/home/StreamingBrands';
+import { HomeCategories } from '../../src/components/home/HomeCategories';
+import { isAdultCategory } from '../../src/services/parentalControl';
 import { EnrichedPosterImage } from '../../src/components/common/EnrichedPosterImage';
 
 export default function HomeScreen() {
@@ -31,7 +33,8 @@ export default function HomeScreen() {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const [account, setAccount] = useState<SavedAccount | null>(null);
-  const [activeFilter, setActiveFilter] = useState<'home' | 'tudo' | 'series' | 'filmes' | 'aovivo'>('home');
+  const [vodCategories, setVodCategories] = useState<IptvCategory[]>([]);
+  const [seriesCategories, setSeriesCategories] = useState<IptvCategory[]>([]);
   const [heroItem, setHeroItem] = useState<VodMovie | null>(null);
   const [todayChannels, setTodayChannels] = useState<LiveChannel[]>([]);
   const [favoriteChannels, setFavoriteChannels] = useState<LiveChannel[]>([]);
@@ -42,19 +45,22 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Streaming Brand Selection Modal
-  const [selectedBrand, setSelectedBrand] = useState<StreamingBrand | null>(null);
-  const [brandModalVisible, setBrandModalVisible] = useState(false);
-
   useEffect(() => {
     loadHomeData();
   }, []);
 
-  // Recarrega favoritos e histórico sempre que a tela ganha foco
+  // Recarrega favoritos e histórico sempre que a tela ganha foco, ou recarrega a Home se a conta mudou
   useFocusEffect(
     useCallback(() => {
-      loadFavoritesAndProgress();
-    }, [])
+      storage.getActiveAccount().then((active) => {
+        if (active && (!account || active.id !== account.id)) {
+          setAccount(active);
+          loadHomeData();
+        } else {
+          loadFavoritesAndProgress();
+        }
+      });
+    }, [account])
   );
 
   const loadFavoritesAndProgress = async () => {
@@ -89,10 +95,21 @@ export default function HomeScreen() {
       const client = new XtreamClient(active.serverUrl, active.username, active.password);
 
       // Usar Promise.allSettled para carregar canais ao vivo e categorias rapidamente
-      const [channelsRes, vodCatsRes] = await Promise.allSettled([
+      const [channelsRes, vodCatsRes, seriesCatsRes] = await Promise.allSettled([
         client.getLiveStreams(),
         client.getVodCategories(),
+        client.getSeriesCategories(),
       ]);
+
+      if (vodCatsRes.status === 'fulfilled' && Array.isArray(vodCatsRes.value)) {
+        const safeVodCats = vodCatsRes.value.filter((c) => !isAdultCategory(c.category_name));
+        setVodCategories(safeVodCats);
+      }
+
+      if (seriesCatsRes.status === 'fulfilled' && Array.isArray(seriesCatsRes.value)) {
+        const safeSeriesCats = seriesCatsRes.value.filter((c) => !isAdultCategory(c.category_name));
+        setSeriesCategories(safeSeriesCats);
+      }
 
       let moviesData: VodMovie[] = [];
       const firstCatId =
@@ -154,32 +171,24 @@ export default function HomeScreen() {
     }
   };
 
-  const handleSelectBrand = (brand: StreamingBrand) => {
-    setSelectedBrand(brand);
-    setBrandModalVisible(true);
+  const handleSelectVodCategory = (cat: IptvCategory) => {
+    router.push({
+      pathname: '/(tabs)/movies',
+      params: {
+        categoryId: cat.category_id,
+        categoryName: cat.category_name,
+      },
+    });
   };
 
-  const navigateToBrandContent = (type: 'movies' | 'series') => {
-    if (!selectedBrand) return;
-    setBrandModalVisible(false);
-
-    if (type === 'movies') {
-      router.push({
-        pathname: '/(tabs)/movies',
-        params: {
-          brand: selectedBrand.id,
-          brandName: selectedBrand.name,
-        },
-      });
-    } else {
-      router.push({
-        pathname: '/(tabs)/series',
-        params: {
-          brand: selectedBrand.id,
-          brandName: selectedBrand.name,
-        },
-      });
-    }
+  const handleSelectSeriesCategory = (cat: IptvCategory) => {
+    router.push({
+      pathname: '/(tabs)/series',
+      params: {
+        categoryId: cat.category_id,
+        categoryName: cat.category_name,
+      },
+    });
   };
 
   return (
@@ -197,60 +206,6 @@ export default function HomeScreen() {
         >
           <Ionicons name="search" size={22} color="#fff" />
         </FocusableItem>
-      </View>
-
-      {/* Filter Chips Bar (Home, Ao vivo, Séries, Filmes) */}
-      <View style={styles.filterBar}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {/* 1. Home */}
-          <Pressable
-            style={[styles.filterChip, (activeFilter === 'home' || activeFilter === 'tudo') && styles.filterChipActive]}
-            onPress={() => setActiveFilter('home')}
-          >
-            <Text style={[styles.filterText, (activeFilter === 'home' || activeFilter === 'tudo') && styles.filterTextActive]}>
-              Home
-            </Text>
-          </Pressable>
-
-          {/* 2. Ao vivo */}
-          <Pressable
-            style={[styles.filterChip, activeFilter === 'aovivo' && styles.filterChipActive]}
-            onPress={() => {
-              setActiveFilter('aovivo');
-              router.push('/(tabs)/live');
-            }}
-          >
-            <Text style={[styles.filterText, activeFilter === 'aovivo' && styles.filterTextActive]}>
-              Ao vivo
-            </Text>
-          </Pressable>
-
-          {/* 3. Séries */}
-          <Pressable
-            style={[styles.filterChip, activeFilter === 'series' && styles.filterChipActive]}
-            onPress={() => {
-              setActiveFilter('series');
-              router.push('/(tabs)/series');
-            }}
-          >
-            <Text style={[styles.filterText, activeFilter === 'series' && styles.filterTextActive]}>
-              Séries
-            </Text>
-          </Pressable>
-
-          {/* 4. Filmes */}
-          <Pressable
-            style={[styles.filterChip, activeFilter === 'filmes' && styles.filterChipActive]}
-            onPress={() => {
-              setActiveFilter('filmes');
-              router.push('/(tabs)/movies');
-            }}
-          >
-            <Text style={[styles.filterText, activeFilter === 'filmes' && styles.filterTextActive]}>
-              Filmes
-            </Text>
-          </Pressable>
-        </ScrollView>
       </View>
 
       {loading ? (
@@ -361,12 +316,9 @@ export default function HomeScreen() {
                       style={styles.watchNowButtonLandscape}
                       onPress={() => {
                         router.push({
-                          pathname: '/player/[id]',
+                          pathname: '/(tabs)/movies',
                           params: {
-                            id: heroItem.stream_id,
-                            type: 'movie',
-                            title: heroItem.name,
-                            extension: heroItem.container_extension || 'mp4',
+                            movieId: String(heroItem.stream_id),
                           },
                         });
                       }}
@@ -405,12 +357,9 @@ export default function HomeScreen() {
                       style={styles.watchNowButton}
                       onPress={() => {
                         router.push({
-                          pathname: '/player/[id]',
+                          pathname: '/(tabs)/movies',
                           params: {
-                            id: heroItem.stream_id,
-                            type: 'movie',
-                            title: heroItem.name,
-                            extension: heroItem.container_extension || 'mp4',
+                            movieId: String(heroItem.stream_id),
                           },
                         });
                       }}
@@ -431,8 +380,13 @@ export default function HomeScreen() {
             </View>
           ) : null}
 
-          {/* Streaming Brands Row (Netflix, Prime Video, Disney+, Max, etc.) */}
-          <StreamingBrandsRow onSelectBrand={handleSelectBrand} />
+          {/* Categorias de Filmes e Séries */}
+          <HomeCategories
+            vodCategories={vodCategories}
+            seriesCategories={seriesCategories}
+            onSelectVodCategory={handleSelectVodCategory}
+            onSelectSeriesCategory={handleSelectSeriesCategory}
+          />
 
           {/* Section: Continuar Assistindo (Se houver progresso salvo) */}
           {continueWatching.length > 0 ? (
@@ -456,6 +410,23 @@ export default function HomeScreen() {
                   return (
                     <FocusableItem
                       style={styles.continueCardItem}
+                      onLongPress={() => {
+                        Alert.alert(
+                          'Remover do Histórico',
+                          `Deseja remover "${item.title}" de Continuar Assistindo?`,
+                          [
+                            { text: 'Cancelar', style: 'cancel' },
+                            {
+                              text: 'Remover',
+                              style: 'destructive',
+                              onPress: async () => {
+                                await storage.removeWatchProgress(item.id);
+                                loadFavoritesAndProgress();
+                              },
+                            },
+                          ]
+                        );
+                      }}
                       onPress={() => {
                         // Continua assistindo diretamente no player usando o link que deu certo
                         router.push({
@@ -485,6 +456,30 @@ export default function HomeScreen() {
                           contentFit="cover"
                           fallbackIcon={item.type === 'series' ? 'albums-outline' : 'play-circle-outline'}
                         />
+                        {/* Botão de excluir direto no card */}
+                        <Pressable
+                          style={styles.continueDeleteBtn}
+                          hitSlop={8}
+                          onPress={() => {
+                            Alert.alert(
+                              'Remover do Histórico',
+                              `Deseja remover "${item.title}" de Continuar Assistindo?`,
+                              [
+                                { text: 'Cancelar', style: 'cancel' },
+                                {
+                                  text: 'Remover',
+                                  style: 'destructive',
+                                  onPress: async () => {
+                                    await storage.removeWatchProgress(item.id);
+                                    loadFavoritesAndProgress();
+                                  },
+                                },
+                              ]
+                            );
+                          }}
+                        >
+                          <Ionicons name="close" size={13} color="#fff" />
+                        </Pressable>
                         <View style={styles.playFloatingIcon}>
                           <Ionicons name="play" size={14} color="#000" />
                         </View>
@@ -691,66 +686,6 @@ export default function HomeScreen() {
         </ScrollView>
       )}
 
-      {/* Modal: Escolha entre Filmes e Séries da Marca Selecionada */}
-      <Modal
-        visible={brandModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setBrandModalVisible(false)}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={() => setBrandModalVisible(false)}>
-          <View style={styles.brandModalSheet}>
-            {selectedBrand ? (
-              <>
-                <View style={styles.modalHandle} />
-                <Text style={[styles.brandModalTitle, { color: selectedBrand.borderColor }]}>
-                  {selectedBrand.name}
-                </Text>
-                <Text style={styles.brandModalSubtitle}>
-                  O que você gostaria de explorar hoje?
-                </Text>
-
-                <View style={styles.brandModalButtonsRow}>
-                  <Pressable
-                    style={styles.brandChoiceCard}
-                    onPress={() => navigateToBrandContent('movies')}
-                  >
-                    <LinearGradient
-                      colors={['#1c1c24', '#121217']}
-                      style={styles.brandChoiceGradient}
-                    >
-                      <Ionicons name="film" size={32} color={colors.primary} />
-                      <Text style={styles.brandChoiceTitle}>Filmes</Text>
-                      <Text style={styles.brandChoiceDesc}>Ver catálogo de filmes</Text>
-                    </LinearGradient>
-                  </Pressable>
-
-                  <Pressable
-                    style={styles.brandChoiceCard}
-                    onPress={() => navigateToBrandContent('series')}
-                  >
-                    <LinearGradient
-                      colors={['#1c1c24', '#121217']}
-                      style={styles.brandChoiceGradient}
-                    >
-                      <Ionicons name="tv" size={32} color={colors.secondary} />
-                      <Text style={styles.brandChoiceTitle}>Séries</Text>
-                      <Text style={styles.brandChoiceDesc}>Ver temporadas e episódios</Text>
-                    </LinearGradient>
-                  </Pressable>
-                </View>
-
-                <Pressable
-                  style={styles.closeModalBtn}
-                  onPress={() => setBrandModalVisible(false)}
-                >
-                  <Text style={styles.closeModalBtnText}>Fechar</Text>
-                </Pressable>
-              </>
-            ) : null}
-          </View>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -787,34 +722,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#1E2845',
-  },
-  filterBar: {
-    marginBottom: 16,
-  },
-  filterScroll: {
-    paddingHorizontal: 20,
-    gap: 10,
-  },
-  filterChip: {
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#101628',
-    borderWidth: 1,
-    borderColor: '#1E2845',
-  },
-  filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#9AA4BC',
-  },
-  filterTextActive: {
-    color: '#000',
-    fontWeight: '800',
   },
   centerBox: {
     flex: 1,
@@ -1034,9 +941,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#16161f',
   },
+  continueDeleteBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
   playFloatingIcon: {
     position: 'absolute',
-    top: 8,
+    bottom: 8,
     right: 8,
     width: 26,
     height: 26,
@@ -1126,79 +1047,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
     textTransform: 'uppercase',
-  },
-
-  /* Brand Modal Styles */
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
-  },
-  brandModalSheet: {
-    backgroundColor: '#121217',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#242432',
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: '#333',
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  brandModalTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    textAlign: 'center',
-    letterSpacing: 0.5,
-  },
-  brandModalSubtitle: {
-    fontSize: 13,
-    color: '#888',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 20,
-  },
-  brandModalButtonsRow: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 20,
-  },
-  brandChoiceCard: {
-    flex: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  brandChoiceGradient: {
-    padding: 18,
-    alignItems: 'center',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#242434',
-    gap: 8,
-  },
-  brandChoiceTitle: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  brandChoiceDesc: {
-    color: '#777',
-    fontSize: 11,
-    textAlign: 'center',
-  },
-  closeModalBtn: {
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  closeModalBtnText: {
-    color: '#666',
-    fontSize: 14,
-    fontWeight: '600',
   },
 
   /* Empty / Error state styles */

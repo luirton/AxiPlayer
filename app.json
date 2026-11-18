@@ -22,7 +22,7 @@
         "backgroundColor": "#050505",
         "foregroundImage": "./assets/icon.png"
       },
-                  "permissions": [
+                              "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
@@ -32,7 +32,6 @@
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_VIDEO",
         "READ_MEDIA_AUDIO",
-        "MANAGE_EXTERNAL_STORAGE",
         "WAKE_LOCK",
         "FOREGROUND_SERVICE"
       ],

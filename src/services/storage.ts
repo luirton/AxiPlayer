@@ -115,6 +115,23 @@ export const storage = {
     const list = await this.getAccounts();
     const filtered = list.filter((a) => a.id !== accountId);
     await AsyncStorage.setItem(KEYS.ACCOUNTS, JSON.stringify(filtered));
+
+    // Remove dados escopados da conta excluída
+    const safe = accountId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const accountKeys = [
+      `${KEYS.FAVORITES}_${safe}`,
+      `${KEYS.FAVORITE_CHANNELS_DATA}_${safe}`,
+      `${KEYS.FAVORITES_MOVIES}_${safe}`,
+      `${KEYS.FAVORITE_MOVIES_DATA}_${safe}`,
+      `${KEYS.FAVORITES_SERIES}_${safe}`,
+      `${KEYS.FAVORITE_SERIES_DATA}_${safe}`,
+      `${KEYS.WATCH_PROGRESS}_${safe}`,
+      `${KEYS.MY_LIST}_${safe}`,
+      `${KEYS.WATCH_LATER}_${safe}`,
+    ];
+    try {
+      await AsyncStorage.multiRemove(accountKeys);
+    } catch {}
   },
 
   async getActiveAccount(): Promise<SavedAccount | null> {
@@ -141,14 +158,49 @@ export const storage = {
     }
   },
 
-  // Favorites (Canais de TV)
-  async getFavorites(): Promise<number[]> {
-    const json = await AsyncStorage.getItem(KEYS.FAVORITES);
+  // Helpers para isolamento de dados por conta (Favoritos, Continuar Assistindo, Minha Lista, Assistir Depois)
+  async getAccountScopedKey(baseKey: string, specificAccountId?: string): Promise<string> {
+    let accId = specificAccountId;
+    if (!accId) {
+      const active = await this.getActiveAccount();
+      if (active) accId = active.id;
+    }
+    if (!accId) return baseKey;
+    const safe = accId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `${baseKey}_${safe}`;
+  },
+
+  async getScopedItem(baseKey: string, specificAccountId?: string): Promise<string | null> {
+    const scopedKey = await this.getAccountScopedKey(baseKey, specificAccountId);
+    const value = await AsyncStorage.getItem(scopedKey);
+    if (value !== null) return value;
+
+    // Migração de dados legados globais para a conta ativa na primeira execução:
+    if (scopedKey !== baseKey) {
+      const legacyValue = await AsyncStorage.getItem(baseKey);
+      if (legacyValue !== null) {
+        try {
+          await AsyncStorage.setItem(scopedKey, legacyValue);
+        } catch {}
+        return legacyValue;
+      }
+    }
+    return null;
+  },
+
+  async setScopedItem(baseKey: string, value: string, specificAccountId?: string): Promise<void> {
+    const scopedKey = await this.getAccountScopedKey(baseKey, specificAccountId);
+    await AsyncStorage.setItem(scopedKey, value);
+  },
+
+  // Favorites (Canais de TV) - Escopado por Conta
+  async getFavorites(accountId?: string): Promise<number[]> {
+    const json = await this.getScopedItem(KEYS.FAVORITES, accountId);
     return json ? JSON.parse(json) : [];
   },
 
-  async toggleFavorite(streamId: number): Promise<number[]> {
-    const favs = await this.getFavorites();
+  async toggleFavorite(streamId: number, accountId?: string): Promise<number[]> {
+    const favs = await this.getFavorites(accountId);
     const index = favs.indexOf(streamId);
     let updated: number[];
     if (index >= 0) {
@@ -156,12 +208,12 @@ export const storage = {
     } else {
       updated = [...favs, streamId];
     }
-    await AsyncStorage.setItem(KEYS.FAVORITES, JSON.stringify(updated));
+    await this.setScopedItem(KEYS.FAVORITES, JSON.stringify(updated), accountId);
     return updated;
   },
 
-  async getFavoriteChannels(): Promise<LiveChannel[]> {
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_CHANNELS_DATA);
+  async getFavoriteChannels(accountId?: string): Promise<LiveChannel[]> {
+    const json = await this.getScopedItem(KEYS.FAVORITE_CHANNELS_DATA, accountId);
     if (!json) return [];
     try {
       const data: Record<string, LiveChannel> = JSON.parse(json);
@@ -171,51 +223,51 @@ export const storage = {
     }
   },
 
-  async saveFavoriteChannel(channel: LiveChannel): Promise<void> {
-    const favs = await this.getFavorites();
+  async saveFavoriteChannel(channel: LiveChannel, accountId?: string): Promise<void> {
+    const favs = await this.getFavorites(accountId);
     if (!favs.includes(channel.stream_id)) {
       favs.push(channel.stream_id);
-      await AsyncStorage.setItem(KEYS.FAVORITES, JSON.stringify(favs));
+      await this.setScopedItem(KEYS.FAVORITES, JSON.stringify(favs), accountId);
     }
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_CHANNELS_DATA);
+    const json = await this.getScopedItem(KEYS.FAVORITE_CHANNELS_DATA, accountId);
     const data: Record<string, LiveChannel> = json ? JSON.parse(json) : {};
     data[String(channel.stream_id)] = channel;
-    await AsyncStorage.setItem(KEYS.FAVORITE_CHANNELS_DATA, JSON.stringify(data));
+    await this.setScopedItem(KEYS.FAVORITE_CHANNELS_DATA, JSON.stringify(data), accountId);
   },
 
-  async removeFavoriteChannel(streamId: number): Promise<void> {
-    const favs = await this.getFavorites();
+  async removeFavoriteChannel(streamId: number, accountId?: string): Promise<void> {
+    const favs = await this.getFavorites(accountId);
     const updatedFavs = favs.filter((id) => id !== streamId);
-    await AsyncStorage.setItem(KEYS.FAVORITES, JSON.stringify(updatedFavs));
+    await this.setScopedItem(KEYS.FAVORITES, JSON.stringify(updatedFavs), accountId);
 
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_CHANNELS_DATA);
+    const json = await this.getScopedItem(KEYS.FAVORITE_CHANNELS_DATA, accountId);
     if (json) {
       const data: Record<string, LiveChannel> = JSON.parse(json);
       delete data[String(streamId)];
-      await AsyncStorage.setItem(KEYS.FAVORITE_CHANNELS_DATA, JSON.stringify(data));
+      await this.setScopedItem(KEYS.FAVORITE_CHANNELS_DATA, JSON.stringify(data), accountId);
     }
   },
 
-  async toggleFavoriteChannel(channel: LiveChannel): Promise<boolean> {
-    const favs = await this.getFavorites();
+  async toggleFavoriteChannel(channel: LiveChannel, accountId?: string): Promise<boolean> {
+    const favs = await this.getFavorites(accountId);
     const isFav = favs.includes(channel.stream_id);
     if (isFav) {
-      await this.removeFavoriteChannel(channel.stream_id);
+      await this.removeFavoriteChannel(channel.stream_id, accountId);
       return false;
     } else {
-      await this.saveFavoriteChannel(channel);
+      await this.saveFavoriteChannel(channel, accountId);
       return true;
     }
   },
 
-  // Favorites (Filmes VOD)
-  async getMovieFavorites(): Promise<number[]> {
-    const json = await AsyncStorage.getItem(KEYS.FAVORITES_MOVIES);
+  // Favorites (Filmes VOD) - Escopado por Conta
+  async getMovieFavorites(accountId?: string): Promise<number[]> {
+    const json = await this.getScopedItem(KEYS.FAVORITES_MOVIES, accountId);
     return json ? JSON.parse(json) : [];
   },
 
-  async getFavoriteMovies(): Promise<VodMovie[]> {
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_MOVIES_DATA);
+  async getFavoriteMovies(accountId?: string): Promise<VodMovie[]> {
+    const json = await this.getScopedItem(KEYS.FAVORITE_MOVIES_DATA, accountId);
     if (!json) return [];
     try {
       const data: Record<string, VodMovie> = JSON.parse(json);
@@ -225,45 +277,45 @@ export const storage = {
     }
   },
 
-  async saveFavoriteMovie(movie: VodMovie): Promise<void> {
-    const favs = await this.getMovieFavorites();
+  async saveFavoriteMovie(movie: VodMovie, accountId?: string): Promise<void> {
+    const favs = await this.getMovieFavorites(accountId);
     if (!favs.includes(movie.stream_id)) {
       favs.push(movie.stream_id);
-      await AsyncStorage.setItem(KEYS.FAVORITES_MOVIES, JSON.stringify(favs));
+      await this.setScopedItem(KEYS.FAVORITES_MOVIES, JSON.stringify(favs), accountId);
     }
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_MOVIES_DATA);
+    const json = await this.getScopedItem(KEYS.FAVORITE_MOVIES_DATA, accountId);
     const data: Record<string, VodMovie> = json ? JSON.parse(json) : {};
     data[String(movie.stream_id)] = movie;
-    await AsyncStorage.setItem(KEYS.FAVORITE_MOVIES_DATA, JSON.stringify(data));
+    await this.setScopedItem(KEYS.FAVORITE_MOVIES_DATA, JSON.stringify(data), accountId);
   },
 
-  async removeFavoriteMovie(streamId: number): Promise<void> {
-    const favs = await this.getMovieFavorites();
+  async removeFavoriteMovie(streamId: number, accountId?: string): Promise<void> {
+    const favs = await this.getMovieFavorites(accountId);
     const updatedFavs = favs.filter((id) => id !== streamId);
-    await AsyncStorage.setItem(KEYS.FAVORITES_MOVIES, JSON.stringify(updatedFavs));
+    await this.setScopedItem(KEYS.FAVORITES_MOVIES, JSON.stringify(updatedFavs), accountId);
 
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_MOVIES_DATA);
+    const json = await this.getScopedItem(KEYS.FAVORITE_MOVIES_DATA, accountId);
     if (json) {
       const data: Record<string, VodMovie> = JSON.parse(json);
       delete data[String(streamId)];
-      await AsyncStorage.setItem(KEYS.FAVORITE_MOVIES_DATA, JSON.stringify(data));
+      await this.setScopedItem(KEYS.FAVORITE_MOVIES_DATA, JSON.stringify(data), accountId);
     }
   },
 
-  async toggleFavoriteMovie(movie: VodMovie): Promise<boolean> {
-    const favs = await this.getMovieFavorites();
+  async toggleFavoriteMovie(movie: VodMovie, accountId?: string): Promise<boolean> {
+    const favs = await this.getMovieFavorites(accountId);
     const isFav = favs.includes(movie.stream_id);
     if (isFav) {
-      await this.removeFavoriteMovie(movie.stream_id);
+      await this.removeFavoriteMovie(movie.stream_id, accountId);
       return false;
     } else {
-      await this.saveFavoriteMovie(movie);
+      await this.saveFavoriteMovie(movie, accountId);
       return true;
     }
   },
 
-  async toggleMovieFavorite(streamId: number): Promise<number[]> {
-    const favs = await this.getMovieFavorites();
+  async toggleMovieFavorite(streamId: number, accountId?: string): Promise<number[]> {
+    const favs = await this.getMovieFavorites(accountId);
     const index = favs.indexOf(streamId);
     let updated: number[];
     if (index >= 0) {
@@ -271,18 +323,18 @@ export const storage = {
     } else {
       updated = [...favs, streamId];
     }
-    await AsyncStorage.setItem(KEYS.FAVORITES_MOVIES, JSON.stringify(updated));
+    await this.setScopedItem(KEYS.FAVORITES_MOVIES, JSON.stringify(updated), accountId);
     return updated;
   },
 
-  // Favorites (Séries VOD)
-  async getSeriesFavorites(): Promise<number[]> {
-    const json = await AsyncStorage.getItem(KEYS.FAVORITES_SERIES);
+  // Favorites (Séries VOD) - Escopado por Conta
+  async getSeriesFavorites(accountId?: string): Promise<number[]> {
+    const json = await this.getScopedItem(KEYS.FAVORITES_SERIES, accountId);
     return json ? JSON.parse(json) : [];
   },
 
-  async getFavoriteSeries(): Promise<SeriesItem[]> {
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_SERIES_DATA);
+  async getFavoriteSeries(accountId?: string): Promise<SeriesItem[]> {
+    const json = await this.getScopedItem(KEYS.FAVORITE_SERIES_DATA, accountId);
     if (!json) return [];
     try {
       const data: Record<string, SeriesItem> = JSON.parse(json);
@@ -292,45 +344,45 @@ export const storage = {
     }
   },
 
-  async saveFavoriteSeries(series: SeriesItem): Promise<void> {
-    const favs = await this.getSeriesFavorites();
+  async saveFavoriteSeries(series: SeriesItem, accountId?: string): Promise<void> {
+    const favs = await this.getSeriesFavorites(accountId);
     if (!favs.includes(series.series_id)) {
       favs.push(series.series_id);
-      await AsyncStorage.setItem(KEYS.FAVORITES_SERIES, JSON.stringify(favs));
+      await this.setScopedItem(KEYS.FAVORITES_SERIES, JSON.stringify(favs), accountId);
     }
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_SERIES_DATA);
+    const json = await this.getScopedItem(KEYS.FAVORITE_SERIES_DATA, accountId);
     const data: Record<string, SeriesItem> = json ? JSON.parse(json) : {};
     data[String(series.series_id)] = series;
-    await AsyncStorage.setItem(KEYS.FAVORITE_SERIES_DATA, JSON.stringify(data));
+    await this.setScopedItem(KEYS.FAVORITE_SERIES_DATA, JSON.stringify(data), accountId);
   },
 
-  async removeFavoriteSeries(seriesId: number): Promise<void> {
-    const favs = await this.getSeriesFavorites();
+  async removeFavoriteSeries(seriesId: number, accountId?: string): Promise<void> {
+    const favs = await this.getSeriesFavorites(accountId);
     const updatedFavs = favs.filter((id) => id !== seriesId);
-    await AsyncStorage.setItem(KEYS.FAVORITES_SERIES, JSON.stringify(updatedFavs));
+    await this.setScopedItem(KEYS.FAVORITES_SERIES, JSON.stringify(updatedFavs), accountId);
 
-    const json = await AsyncStorage.getItem(KEYS.FAVORITE_SERIES_DATA);
+    const json = await this.getScopedItem(KEYS.FAVORITE_SERIES_DATA, accountId);
     if (json) {
       const data: Record<string, SeriesItem> = JSON.parse(json);
       delete data[String(seriesId)];
-      await AsyncStorage.setItem(KEYS.FAVORITE_SERIES_DATA, JSON.stringify(data));
+      await this.setScopedItem(KEYS.FAVORITE_SERIES_DATA, JSON.stringify(data), accountId);
     }
   },
 
-  async toggleFavoriteSeries(series: SeriesItem): Promise<boolean> {
-    const favs = await this.getSeriesFavorites();
+  async toggleFavoriteSeries(series: SeriesItem, accountId?: string): Promise<boolean> {
+    const favs = await this.getSeriesFavorites(accountId);
     const isFav = favs.includes(series.series_id);
     if (isFav) {
-      await this.removeFavoriteSeries(series.series_id);
+      await this.removeFavoriteSeries(series.series_id, accountId);
       return false;
     } else {
-      await this.saveFavoriteSeries(series);
+      await this.saveFavoriteSeries(series, accountId);
       return true;
     }
   },
 
-  async toggleSeriesFavorite(seriesId: number): Promise<number[]> {
-    const favs = await this.getSeriesFavorites();
+  async toggleSeriesFavorite(seriesId: number, accountId?: string): Promise<number[]> {
+    const favs = await this.getSeriesFavorites(accountId);
     const index = favs.indexOf(seriesId);
     let updated: number[];
     if (index >= 0) {
@@ -338,7 +390,7 @@ export const storage = {
     } else {
       updated = [...favs, seriesId];
     }
-    await AsyncStorage.setItem(KEYS.FAVORITES_SERIES, JSON.stringify(updated));
+    await this.setScopedItem(KEYS.FAVORITES_SERIES, JSON.stringify(updated), accountId);
     return updated;
   },
 
@@ -380,9 +432,12 @@ export const storage = {
     return null;
   },
 
-  // Watch Progress (Continuar Assistindo)
-  async saveWatchProgress(item: Partial<WatchProgressItem> & { id: number | string; positionSec: number; durationSec: number }): Promise<void> {
-    const json = await AsyncStorage.getItem(KEYS.WATCH_PROGRESS);
+  // Watch Progress (Continuar Assistindo) - Escopado por Conta
+  async saveWatchProgress(
+    item: Partial<WatchProgressItem> & { id: number | string; positionSec: number; durationSec: number },
+    accountId?: string
+  ): Promise<void> {
+    const json = await this.getScopedItem(KEYS.WATCH_PROGRESS, accountId);
     const progress: Record<string, WatchProgressItem> = json ? JSON.parse(json) : {};
 
     // Quando for Série: guarda somente o último visto e remove qualquer outro episódio anterior da mesma série
@@ -443,11 +498,11 @@ export const storage = {
       extra: item.extra,
     };
 
-    await AsyncStorage.setItem(KEYS.WATCH_PROGRESS, JSON.stringify(progress));
+    await this.setScopedItem(KEYS.WATCH_PROGRESS, JSON.stringify(progress), accountId);
   },
 
-  async getWatchProgress(id: number | string, title?: string): Promise<WatchProgressItem | null> {
-    const json = await AsyncStorage.getItem(KEYS.WATCH_PROGRESS);
+  async getWatchProgress(id: number | string, title?: string, accountId?: string): Promise<WatchProgressItem | null> {
+    const json = await this.getScopedItem(KEYS.WATCH_PROGRESS, accountId);
     if (!json) return null;
     const progress: Record<string, WatchProgressItem> = JSON.parse(json);
     const strId = String(id);
@@ -479,8 +534,8 @@ export const storage = {
     return found || null;
   },
 
-  async getAllWatchProgress(): Promise<WatchProgressItem[]> {
-    const json = await AsyncStorage.getItem(KEYS.WATCH_PROGRESS);
+  async getAllWatchProgress(accountId?: string): Promise<WatchProgressItem[]> {
+    const json = await this.getScopedItem(KEYS.WATCH_PROGRESS, accountId);
     if (!json) return [];
     try {
       const progress: Record<string, WatchProgressItem> = JSON.parse(json);
@@ -535,9 +590,22 @@ export const storage = {
     }
   },
 
-  // Minha Lista (Filmes e Séries adicionados à lista)
-  async getMyList(): Promise<MediaListItem[]> {
-    const json = await AsyncStorage.getItem(KEYS.MY_LIST);
+  async removeWatchProgress(id: number | string, accountId?: string): Promise<void> {
+    const json = await this.getScopedItem(KEYS.WATCH_PROGRESS, accountId);
+    if (!json) return;
+    try {
+      const progress: Record<string, WatchProgressItem> = JSON.parse(json);
+      const strId = String(id);
+      if (progress[strId]) {
+        delete progress[strId];
+        await this.setScopedItem(KEYS.WATCH_PROGRESS, JSON.stringify(progress), accountId);
+      }
+    } catch {}
+  },
+
+  // Minha Lista (Filmes e Séries adicionados à lista) - Escopado por Conta
+  async getMyList(accountId?: string): Promise<MediaListItem[]> {
+    const json = await this.getScopedItem(KEYS.MY_LIST, accountId);
     if (!json) return [];
     try {
       const list: MediaListItem[] = JSON.parse(json);
@@ -547,38 +615,38 @@ export const storage = {
     }
   },
 
-  async addToMyList(item: MediaListItem): Promise<void> {
-    const list = await this.getMyList();
+  async addToMyList(item: MediaListItem, accountId?: string): Promise<void> {
+    const list = await this.getMyList(accountId);
     const filtered = list.filter((i) => String(i.id) !== String(item.id));
     filtered.unshift({ ...item, addedAt: Date.now() });
-    await AsyncStorage.setItem(KEYS.MY_LIST, JSON.stringify(filtered));
+    await this.setScopedItem(KEYS.MY_LIST, JSON.stringify(filtered), accountId);
   },
 
-  async removeFromMyList(id: number | string): Promise<void> {
-    const list = await this.getMyList();
+  async removeFromMyList(id: number | string, accountId?: string): Promise<void> {
+    const list = await this.getMyList(accountId);
     const filtered = list.filter((i) => String(i.id) !== String(id));
-    await AsyncStorage.setItem(KEYS.MY_LIST, JSON.stringify(filtered));
+    await this.setScopedItem(KEYS.MY_LIST, JSON.stringify(filtered), accountId);
   },
 
-  async isInMyList(id: number | string): Promise<boolean> {
-    const list = await this.getMyList();
+  async isInMyList(id: number | string, accountId?: string): Promise<boolean> {
+    const list = await this.getMyList(accountId);
     return list.some((i) => String(i.id) === String(id));
   },
 
-  async toggleMyList(item: MediaListItem): Promise<boolean> {
-    const inList = await this.isInMyList(item.id);
+  async toggleMyList(item: MediaListItem, accountId?: string): Promise<boolean> {
+    const inList = await this.isInMyList(item.id, accountId);
     if (inList) {
-      await this.removeFromMyList(item.id);
+      await this.removeFromMyList(item.id, accountId);
       return false;
     } else {
-      await this.addToMyList(item);
+      await this.addToMyList(item, accountId);
       return true;
     }
   },
 
-  // Assistir Depois (Filmes e Séries salvos para ver mais tarde)
-  async getWatchLater(): Promise<MediaListItem[]> {
-    const json = await AsyncStorage.getItem(KEYS.WATCH_LATER);
+  // Assistir Depois (Filmes e Séries salvos para ver mais tarde) - Escopado por Conta
+  async getWatchLater(accountId?: string): Promise<MediaListItem[]> {
+    const json = await this.getScopedItem(KEYS.WATCH_LATER, accountId);
     if (!json) return [];
     try {
       const list: MediaListItem[] = JSON.parse(json);
@@ -588,31 +656,31 @@ export const storage = {
     }
   },
 
-  async addToWatchLater(item: MediaListItem): Promise<void> {
-    const list = await this.getWatchLater();
+  async addToWatchLater(item: MediaListItem, accountId?: string): Promise<void> {
+    const list = await this.getWatchLater(accountId);
     const filtered = list.filter((i) => String(i.id) !== String(item.id));
     filtered.unshift({ ...item, addedAt: Date.now() });
-    await AsyncStorage.setItem(KEYS.WATCH_LATER, JSON.stringify(filtered));
+    await this.setScopedItem(KEYS.WATCH_LATER, JSON.stringify(filtered), accountId);
   },
 
-  async removeFromWatchLater(id: number | string): Promise<void> {
-    const list = await this.getWatchLater();
+  async removeFromWatchLater(id: number | string, accountId?: string): Promise<void> {
+    const list = await this.getWatchLater(accountId);
     const filtered = list.filter((i) => String(i.id) !== String(id));
-    await AsyncStorage.setItem(KEYS.WATCH_LATER, JSON.stringify(filtered));
+    await this.setScopedItem(KEYS.WATCH_LATER, JSON.stringify(filtered), accountId);
   },
 
-  async isInWatchLater(id: number | string): Promise<boolean> {
-    const list = await this.getWatchLater();
+  async isInWatchLater(id: number | string, accountId?: string): Promise<boolean> {
+    const list = await this.getWatchLater(accountId);
     return list.some((i) => String(i.id) === String(id));
   },
 
-  async toggleWatchLater(item: MediaListItem): Promise<boolean> {
-    const inList = await this.isInWatchLater(item.id);
+  async toggleWatchLater(item: MediaListItem, accountId?: string): Promise<boolean> {
+    const inList = await this.isInWatchLater(item.id, accountId);
     if (inList) {
-      await this.removeFromWatchLater(item.id);
+      await this.removeFromWatchLater(item.id, accountId);
       return false;
     } else {
-      await this.addToWatchLater(item);
+      await this.addToWatchLater(item, accountId);
       return true;
     }
   },
