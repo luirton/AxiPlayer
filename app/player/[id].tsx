@@ -175,7 +175,6 @@ export default function PlayerScreen() {
         } catch (e) {}
       } else if (event.status === 'error') {
         if (!videoSource) return;
-        console.warn('Player status error event:', event);
         handleStreamErrorFallback();
       }
     });
@@ -298,7 +297,6 @@ export default function PlayerScreen() {
     // Watchdog timer: If loading takes longer than 10 seconds, trigger fallback automatically
     if (loadingWatchdogRef.current) clearTimeout(loadingWatchdogRef.current);
     loadingWatchdogRef.current = setTimeout(() => {
-      console.log('[Player Watchdog] Vídeo demorou mais de 10s para carregar. Tentando fallback...');
       handleStreamErrorFallback();
     }, 10000);
 
@@ -393,12 +391,10 @@ export default function PlayerScreen() {
     if (params.type === 'live' || !params.type) {
       const current = currentFormatRef.current;
       const fallback = current === 'm3u8' ? 'ts' : 'm3u8';
-      console.log(`[Player] Fallback de canal ao vivo: alternando de .${current} para .${fallback}`);
       loadStream(currentStreamId, account || undefined, fallback);
     } else if (isVod) {
       const current = currentFormatRef.current;
       const fallback = current.toLowerCase() === 'mp4' ? 'mkv' : 'mp4';
-      console.log(`[Player] Fallback de VOD: alternando de .${current} para .${fallback}`);
       loadStream(currentStreamId, account || undefined, fallback);
     }
   };

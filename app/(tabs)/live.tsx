@@ -122,7 +122,6 @@ export default function LiveScreen() {
         const currentFmt = currentLiveFormatRef.current;
         const fallbackFmt = currentFmt === 'm3u8' ? 'ts' : 'm3u8';
         currentLiveFormatRef.current = fallbackFmt;
-        console.log(`[Live] Fallback de canal: alternando de .${currentFmt} para .${fallbackFmt}`);
         if (account) {
           const client = new XtreamClient(account.serverUrl, account.username, account.password);
           const fallbackUrl = client.getLiveStreamUrl(activeChannel.stream_id, fallbackFmt);
