@@ -91,9 +91,9 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
   * **3 Ações Rápidas em Linha:** `+ Minha lista`, `🕒 Assistir depois` e `⭐ Favoritar`.
   * Para Séries: Seletor de temporadas e lista de episódios com minutagem individual.
 
-### 4.5 Gerenciador de Listas & Coleções no Menu
-* **Seção "Minhas Listas & Coleções" em Configurações:**
-  * Indicadores com contagem em tempo real para:
+### 4.5 Gerenciador de Listas & Coleções no Menu e Home
+* **Seção "Minhas Listas & Coleções" em Configurações (Ajustes/Menu):**
+  * Indicadores com contagem em tempo real e suporte a D-pad e toque (`FocusableItem`) para:
     * `⭐ Meus Favoritos` (Canais, Filmes e Séries)
     * `▶ Continuar Assistindo` (Histórico com progresso e tempo assistido)
     * `📑 Minha Lista` (Títulos adicionados à lista pessoal)
@@ -101,8 +101,12 @@ O projeto é inspirado na arquitetura e usabilidade do *IBO Smarters*, porém de
 * **Modal Gerenciador Completo:**
   * 4 Abas superiores: *Favoritos*, *Continuar*, *Minha Lista* e *Depois*.
   * **Filtro de Categorias Universal:** Seletor de chips dinâmico (`Todos`, `Ao Vivo`, `Filmes`, `Séries`) visível e ativo em todas as abas.
-  * Ações rápidas por item: botão `[ ▶ ]` para reprodução direta no player e `[ 🗑 ]` para exclusão individual com confirmação.
+  * **Barra de Progresso Visual:** Indicador de progresso e porcentagem precisa (`%`) em cada item de *Continuar Assistindo*.
+  * **Ações Rápidas por Item:** Botão `[ ▶ ]` para reprodução direta no player a partir do segundo salvo e `[ 🗑 ]` para exclusão individual com diálogo de confirmação.
   * Layout blindado contra colisões com a barra de status e quebras de flexbox no Android.
+* **Gerenciamento Direto na Tela Inicial (Home):**
+  * Botão discreto `[ ✕ ]` no canto superior direito de cada card de continuar assistindo com isolamento de evento (`stopPropagation`).
+  * Suporte a toque longo (*Long Press*) para abrir o diálogo de confirmação de remoção do histórico.
 
 ### 4.6 Player Avançado com Watchdog Automático
 * **Watchdog de 10 Segundos e Auto-Fallback:**

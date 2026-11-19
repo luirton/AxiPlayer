@@ -460,7 +460,8 @@ export default function HomeScreen() {
                         <Pressable
                           style={styles.continueDeleteBtn}
                           hitSlop={8}
-                          onPress={() => {
+                          onPress={(e) => {
+                            e.stopPropagation();
                             Alert.alert(
                               'Remover do Histórico',
                               `Deseja remover "${item.title}" de Continuar Assistindo?`,

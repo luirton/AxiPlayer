@@ -224,9 +224,12 @@ export default function SettingsScreen() {
     tab: 'favorites' | 'continue' | 'mylist' | 'watchlater',
     item: { id: string | number; type: 'live' | 'movie' | 'series'; title: string }
   ) => {
+    const isContinue = tab === 'continue';
     Alert.alert(
-      'Remover Item',
-      `Deseja remover "${item.title}" desta lista?`,
+      isContinue ? 'Remover do Histórico' : 'Remover Item',
+      isContinue
+        ? `Deseja remover "${item.title}" de Continuar Assistindo?`
+        : `Deseja remover "${item.title}" desta lista?`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -255,13 +258,13 @@ export default function SettingsScreen() {
     );
   };
 
-  const totalFavoritesCount = favChannels.length + favMovies.length + favSeries.length;
-  const continueMoviesCount = continueWatching.filter((i) => i.type !== 'series').length;
-  const continueSeriesCount = continueWatching.filter((i) => i.type === 'series').length;
-  const myListMoviesCount = myList.filter((i) => i.type === 'movie').length;
-  const myListSeriesCount = myList.filter((i) => i.type === 'series').length;
-  const watchLaterMoviesCount = watchLater.filter((i) => i.type === 'movie').length;
-  const watchLaterSeriesCount = watchLater.filter((i) => i.type === 'series').length;
+  const totalFavoritesCount = (favChannels || []).length + (favMovies || []).length + (favSeries || []).length;
+  const continueMoviesCount = (continueWatching || []).filter((i) => i && i.type !== 'series').length;
+  const continueSeriesCount = (continueWatching || []).filter((i) => i && i.type === 'series').length;
+  const myListMoviesCount = (myList || []).filter((i) => i && i.type === 'movie').length;
+  const myListSeriesCount = (myList || []).filter((i) => i && i.type === 'series').length;
+  const watchLaterMoviesCount = (watchLater || []).filter((i) => i && i.type === 'movie').length;
+  const watchLaterSeriesCount = (watchLater || []).filter((i) => i && i.type === 'series').length;
 
   const currentTabTotalCount =
     listManagerTab === 'favorites'
@@ -305,6 +308,7 @@ export default function SettingsScreen() {
         seriesTitle?: string;
         seasonNum?: number | string;
         episodeNum?: number | string;
+        progressPct?: number;
       }> = [];
 
       if (categoryFilter === 'all' || categoryFilter === 'live') {
@@ -345,23 +349,26 @@ export default function SettingsScreen() {
     }
 
     if (listManagerTab === 'continue') {
-      let items = continueWatching;
+      let items = (continueWatching || []).filter(Boolean);
       if (categoryFilter === 'movie') {
         items = items.filter((i) => i.type !== 'series');
       } else if (categoryFilter === 'series') {
         items = items.filter((i) => i.type === 'series');
       }
       return items.map((i) => {
-        const pct = i.durationSec > 0 ? Math.round((i.positionSec / i.durationSec) * 100) : 0;
-        const posMin = Math.floor(i.positionSec / 60);
-        const durMin = Math.floor(i.durationSec / 60);
+        const posSec = i.positionSec || 0;
+        const durSec = i.durationSec || 0;
+        const pct = durSec > 0 ? Math.round((posSec / durSec) * 100) : 0;
+        const posMin = Math.floor(posSec / 60);
+        const durMin = Math.floor(durSec / 60);
         const timeText = durMin > 0 ? `${posMin} min de ${durMin} min (${pct}%)` : `${posMin} min assistidos`;
         return {
           id: i.id,
-          title: i.title,
+          title: i.title || 'Sem título',
           poster: i.poster,
           type: (i.type === 'live' ? 'live' : i.type === 'series' ? 'series' : 'movie') as 'live' | 'movie' | 'series',
           subtitle: `${i.type === 'series' ? 'Série' : 'Filme'} • ${timeText}`,
+          progressPct: pct,
           extension: i.extension,
           streamUrl: i.streamUrl,
           startPosition: i.positionSec,
@@ -374,7 +381,7 @@ export default function SettingsScreen() {
     }
 
     if (listManagerTab === 'mylist') {
-      let items = myList;
+      let items = (myList || []).filter(Boolean);
       if (categoryFilter === 'movie') {
         items = items.filter((i) => i.type === 'movie');
       } else if (categoryFilter === 'series') {
@@ -382,7 +389,7 @@ export default function SettingsScreen() {
       }
       return items.map((i) => ({
         id: i.id,
-        title: i.title,
+        title: i.title || 'Sem título',
         poster: i.poster,
         type: i.type,
         subtitle: `${i.type === 'movie' ? 'Filme' : 'Série'}${i.genre ? ' • ' + i.genre : ''}`,
@@ -390,7 +397,7 @@ export default function SettingsScreen() {
       }));
     }
 
-    let items = watchLater;
+    let items = (watchLater || []).filter(Boolean);
     if (categoryFilter === 'movie') {
       items = items.filter((i) => i.type === 'movie');
     } else if (categoryFilter === 'series') {
@@ -398,7 +405,7 @@ export default function SettingsScreen() {
     }
     return items.map((i) => ({
       id: i.id,
-      title: i.title,
+      title: i.title || 'Sem título',
       poster: i.poster,
       type: i.type,
       subtitle: `${i.type === 'movie' ? 'Filme' : 'Série'}${i.genre ? ' • ' + i.genre : ''}`,
@@ -558,8 +565,8 @@ export default function SettingsScreen() {
       <Text style={styles.sectionTitle}>Minhas Listas & Coleções</Text>
       <View style={styles.card}>
         {/* Meus Favoritos */}
-        <Pressable
-          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
+        <FocusableItem
+          style={styles.settingRow}
           onPress={() => handleOpenListManager('favorites')}
         >
           <View style={styles.settingIcon}>
@@ -575,13 +582,13 @@ export default function SettingsScreen() {
             <Text style={styles.badgeCountText}>{totalFavoritesCount}</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </Pressable>
+        </FocusableItem>
 
         <View style={styles.divider} />
 
         {/* Continuar Assistindo */}
-        <Pressable
-          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
+        <FocusableItem
+          style={styles.settingRow}
           onPress={() => handleOpenListManager('continue')}
         >
           <View style={styles.settingIcon}>
@@ -597,13 +604,13 @@ export default function SettingsScreen() {
             <Text style={styles.badgeCountText}>{continueWatching.length}</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </Pressable>
+        </FocusableItem>
 
         <View style={styles.divider} />
 
         {/* Minha Lista */}
-        <Pressable
-          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
+        <FocusableItem
+          style={styles.settingRow}
           onPress={() => handleOpenListManager('mylist')}
         >
           <View style={styles.settingIcon}>
@@ -619,13 +626,13 @@ export default function SettingsScreen() {
             <Text style={styles.badgeCountText}>{myList.length}</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </Pressable>
+        </FocusableItem>
 
         <View style={styles.divider} />
 
         {/* Assistir Depois */}
-        <Pressable
-          style={({ pressed }) => [styles.settingRow, pressed && { opacity: 0.7 }]}
+        <FocusableItem
+          style={styles.settingRow}
           onPress={() => handleOpenListManager('watchlater')}
         >
           <View style={styles.settingIcon}>
@@ -641,7 +648,7 @@ export default function SettingsScreen() {
             <Text style={styles.badgeCountText}>{watchLater.length}</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </Pressable>
+        </FocusableItem>
       </View>
 
       {/* Stream & Player Settings */}
@@ -1276,6 +1283,19 @@ export default function SettingsScreen() {
                     <Text style={styles.managerItemSub} numberOfLines={1}>
                       {item.subtitle}
                     </Text>
+                    {item.progressPct !== undefined && item.progressPct > 0 ? (
+                      <View style={styles.managerProgressRow}>
+                        <View style={styles.managerProgressTrack}>
+                          <View
+                            style={[
+                              styles.managerProgressFill,
+                              { width: `${Math.min(Math.max(item.progressPct, 5), 100)}%` },
+                            ]}
+                          />
+                        </View>
+                        <Text style={styles.managerProgressText}>{item.progressPct}%</Text>
+                      </View>
+                    ) : null}
                   </View>
 
                   <View style={styles.managerItemActions}>
@@ -1786,6 +1806,31 @@ const styles = StyleSheet.create({
   managerItemSub: {
     color: '#888',
     fontSize: 12,
+  },
+  managerProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  managerProgressTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: '#262635',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  managerProgressFill: {
+    height: '100%',
+    backgroundColor: '#00E5FF',
+    borderRadius: 2,
+  },
+  managerProgressText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#00E5FF',
+    minWidth: 32,
+    textAlign: 'right',
   },
   managerItemActions: {
     flexDirection: 'row',
