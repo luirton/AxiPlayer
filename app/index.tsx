@@ -3,9 +3,13 @@ import { View, StyleSheet, Text, Animated, Easing, useWindowDimensions, Activity
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as SplashScreen from 'expo-splash-screen';
 import { colors } from '../src/theme/colors';
 import { storage } from '../src/services/storage';
 import { requestInitialPermissions } from '../src/services/permissions';
+
+// Keep native splash visible until JS splash screen mounts and starts entrance animation
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function SplashScreen() {
   const router = useRouter();
@@ -20,6 +24,9 @@ export default function SplashScreen() {
   const glowAnim = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
+    // Hide native splash screen once React Native component is active
+    SplashScreen.hideAsync().catch(() => {});
+
     // 1. Entrance animation (Emblem fade & scale)
     Animated.parallel([
       Animated.timing(fadeAnim, {
